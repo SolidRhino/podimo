@@ -14,6 +14,7 @@ services:
     ports:
       - "12104:12104"
     env_file:
+      # Copy .env.docker to .env and adjust before first run
       - .env
     volumes:
       # Persist cache (tokens, podcast episodes, HEAD metadata) across restarts
