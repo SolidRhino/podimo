@@ -99,6 +99,17 @@ The client raises structured exceptions instead of generic `RuntimeError`:
 - `PodcastNotFoundError` — podcast ID doesn't exist
 - `AuthenticationError` — invalid credentials
 
+### Request Logging
+Requests are logged at both start and completion with timing:
+- `@app.before_request` — logs incoming request (method, URL, IP, User-Agent), stores start time
+- `@app.after_request` — logs response status code and request duration in seconds
+
+```python
+# Example log output (DEBUG mode):
+# --> GET /feed/12345-...xml from 192.168.1.1 UA=Overcast/1.0
+# <-- GET /feed/12345-...xml 200 (0.423s)
+```
+
 ## Common Tasks
 
 ### Adding a new region/locale
@@ -151,12 +162,12 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ✅ **FIXED** — No rate limiting (added per-IP limit: 8 req/10s)  
 ✅ **FIXED** — CORS wildcard on all responses (removed)  
 ✅ **FIXED** — Docker running as root with build deps (now multi-stage + non-root)  
+✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)  
+✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` subclasses)  
+✅ **FIXED** — Logging only at `@app.before_request` (now logs both start and end with duration + status code)  
 
 **Remaining:**
-- **Debug enabled in template** — `.env.example` ships with `DEBUG=true` uncommented.
 - **`split_username_region_locale` silent fallback** — If the username doesn't contain exactly 2 commas, it silently defaults to Dutch (`nl`, `nl-NL`). This is intentional for podcast app compatibility but can surprise non-Dutch users. **Do not change without a migration plan** — existing feed URLs would break.
-- **String exception matching still partially present** — The `except Exception` fallback in `serve_feed` still string-matches as a last resort. The primary path now uses structured `PodimoError` subclasses.
-- **Logging at `@app.before_request`** — Request logging happens before processing, so errors during the request are logged *after* the initial log line.
 
 ## Testing
 
