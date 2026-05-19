@@ -40,7 +40,7 @@ class PodimoClient:
         if len(self.username) > 256 or len(self.password) > 256:
             raise ValueError("Username or password are too long")
         if not is_correct_email_address(username):
-            return ValueError("Email is not in the correct format")
+            raise ValueError("Email is not in the correct format")
 
         self.key = token_key(username, password)
         self.token = None
@@ -235,6 +235,6 @@ class PodimoClient:
         insertIntoPodcastCache(podcast_id, fullResult)
         return fullResult
 
-    def getPodcastName (self, podcast):
-        return list(podcast.values())[1]["title"]
+    def getPodcastName(self, podcast):
+        return podcast.get("podcast", {}).get("title", "Unknown")
        

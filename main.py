@@ -261,10 +261,8 @@ async def urlHeadInfo(session, id, url, locale):
                 content_type, _ = guess_type(url)
                 if 'content-length' in response.headers:
                     content_length = response.headers['content-length']
-                if content_type is None and 'content-type' in response.headers:
-                    content_type = response.headers['content-type']
-                else:
-                    content_type = 'audio/mpeg'
+                if content_type is None:
+                    content_type = response.headers.get('content-type', 'audio/mpeg')
                 cache.insertIntoHeadCache(id, content_length, content_type)
                 return (content_length, content_type)
 
@@ -344,37 +342,38 @@ async def podcastsToRss(podcast_id, data, locale):
     podcast = data["podcast"]
     episodes = data["episodes"]
 
-    if len(episodes) > 0:
-        last_episode = episodes[0]
-        title = podcast["title"]
-        if podcast["title"] is None:
-            title = last_episode["podcastName"]
-        fg.title(title)
+    title = podcast.get("title")
+    if title is None and len(episodes) > 0:
+        title = episodes[0].get("podcastName", "Unknown")
+    if title is None:
+        title = "Unknown"
+    fg.title(title)
 
-        if podcast["description"]:
-            fg.description(podcast["description"])
-        else:
-            fg.description(title)
+    if podcast.get("description"):
+        fg.description(podcast["description"])
+    else:
+        fg.description(title)
 
-        fg.link(href=f"https://podimo.com/shows/{podcast_id}", rel="alternate")
+    fg.link(href=f"https://podimo.com/shows/{podcast_id}", rel="alternate")
 
-        image = podcast["images"]["coverImageUrl"]
-        if image is None:
-            image = last_episode['imageUrl']
-        fg.image(image)
+    images = podcast.get("images", {})
+    image = images.get("coverImageUrl") if images else None
+    if image is None and len(episodes) > 0:
+        image = episodes[0].get("imageUrl")
+    fg.image(image)
 
-        language = podcast["language"]
-        if language is None:
-            language = locale
-        fg.language(language)
+    language = podcast.get("language")
+    if language is None:
+        language = locale
+    fg.language(language)
 
-        artist = podcast["authorName"]
-        if artist is None:
-            artist = last_episode["artist"]
-        fg.podcast.itunes_author(artist)
+    artist = podcast.get("authorName")
+    if artist is None and len(episodes) > 0:
+        artist = episodes[0].get("artist")
+    fg.podcast.itunes_author(artist)
 
-        if not PUBLIC_FEEDS:
-            fg.podcast.itunes_block(True)
+    if not PUBLIC_FEEDS:
+        fg.podcast.itunes_block(True)
 
     async with ClientSession() as session:
         for chunk in chunks(episodes, 5):
