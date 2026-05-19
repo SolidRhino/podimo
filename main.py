@@ -24,7 +24,8 @@ import logging
 import time
 from os import getenv
 from functools import wraps
-from podimo.client import PodimoClient
+from typing import Optional, Dict, Any, Tuple, List, Iterator, Callable
+from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, AuthenticationError
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
 from aiohttp import ClientSession, CookieJar, ClientTimeout
@@ -52,13 +53,13 @@ logging.basicConfig(
 
 proactive = dict()
 
-def limit_request():
-    def rate_limiter(func):
+def limit_request() -> Callable:
+    def rate_limiter(func: Callable) -> Callable:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
             ip = request.remote_addr or 'unknown'
             now = time.time()
-            reqs = proactive.get(ip, [])
+            reqs: List[float] = proactive.get(ip, [])
             reqs = [t for t in reqs if now - t < 10]
             reqs.append(now)
             proactive[ip] = reqs
@@ -67,6 +68,12 @@ def limit_request():
             return await func(*args, **kwargs)
         return wrapper
     return rate_limiter
+@app.before_request
+async def log_request():
+    logging.debug(f"Incoming {request.method} request for '{request.url}' from User-Agent {request.user_agent} at {request.remote_addr}.")
+
+
+def example() -> str:
     return f"""Example
 ------------
 Username: example@example.com
@@ -80,7 +87,7 @@ Note that the username and password should be URL encoded. This can be done with
 a tool like https://gchq.github.io/CyberChef/#recipe=URL_Encode(true)
 """
 
-def authenticate():
+def authenticate() -> Response:
     return Response(
         f"""401 Unauthorized.
 You need to login with the correct credentials for Podimo.
@@ -107,7 +114,7 @@ def initialize_client(username: str, password: str, region: str, locale: str) ->
     client.cookie_jar = cache.cookie_jars[key]
     return client
 
-async def check_auth(username, password, region, locale, scraper):
+async def check_auth(username: str, password: str, region: str, locale: str, scraper: Any) -> Optional[PodimoClient]:
     try:
         client = initialize_client(username, password, region, locale)
         if client.token:
@@ -198,7 +205,7 @@ async def serve_basic_auth_feed(podcast_id):
             return await serve_feed(username, auth.password, podcast_id, region, locale)
 
 
-def split_username_region_locale(string):
+def split_username_region_locale(string: str) -> Tuple[str, str, str]:
     s = string.split(',')
     if len(s) == 3:
         return tuple(s)
@@ -206,7 +213,7 @@ def split_username_region_locale(string):
         return (s[0], 'nl', 'nl-NL')
 
 
-def token_key(username, password):
+def token_key(username: str, password: str) -> str:
     key = sha256(
         b"~".join([username.encode("utf-8"), password.encode("utf-8")])
     ).hexdigest()
@@ -215,7 +222,7 @@ def token_key(username, password):
 
 @app.route("/feed/<string:username>/<string:password>/<string:podcast_id>.xml")
 @limit_request()
-async def serve_feed(username, password, podcast_id, region, locale):
+async def serve_feed(username: str, password: str, podcast_id: str, region: str, locale: str) -> Response:
     
     logging.debug(f"Feed request for podcast {podcast_id} from IP {request.remote_addr} with User-Agent:{request.user_agent}.")
     
@@ -244,18 +251,21 @@ async def serve_feed(username, password, podcast_id, region, locale):
             podcasts = await podcastsToRss(
                 podcast_id, await client.getPodcasts(podcast_id, scraper), locale
             )
-        except Exception as e:
-            exception = str(e)
-            if "Podcast not found" in exception:
+        except PodimoError as e:
+            if isinstance(e, PodcastNotFoundError):
                 return Response(
                     "Podcast not found. Are you sure you have the correct ID?", 404, {}
                 )
+            logging.error(f"Podimo API error: {e}")
+            return Response("Something went wrong while fetching the podcasts", 500, {})
+        except Exception as e:
+            exception = str(e)
             logging.error(f"Error while fetching podcasts: {exception}")
             return Response("Something went wrong while fetching the podcasts", 500, {})
         return Response(podcasts, mimetype="text/xml")
 
 
-async def urlHeadInfo(session, id, url, locale):
+async def urlHeadInfo(session: ClientSession, id: str, url: str, locale: str) -> Tuple[str, str]:
     entry = cache.getHeadEntry(id)
     if entry:
         return entry
@@ -288,7 +298,7 @@ async def urlHeadInfo(session, id, url, locale):
 
 
 
-def extract_audio_url(episode):
+def extract_audio_url(episode: Dict[str, Any]) -> Tuple[Optional[str], int]:
     duration = 0
     url = None
     if episode['audio']:
@@ -306,7 +316,7 @@ def extract_audio_url(episode):
     return url, duration
 
 
-async def addFeedEntry(fg, episode, session, locale):
+async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: ClientSession, locale: str) -> None:
     fe = fg.add_entry()
     fe.guid(episode["id"])
 
@@ -343,11 +353,11 @@ async def addFeedEntry(fg, episode, session, locale):
     content_length, content_type = await urlHeadInfo(session, episode['id'], url, locale)
     fe.enclosure(url, content_length, content_type)
 
-def chunks(x, n):
+def chunks(x: List[Any], n: int) -> Iterator[List[Any]]:
     for i in range(0, len(x), n):
         yield x[i:i + n]
 
-async def podcastsToRss(podcast_id, data, locale):
+async def podcastsToRss(podcast_id: str, data: Dict[str, Any], locale: str) -> bytes:
     fg = FeedGenerator()
     fg.load_extension("podcast")
 

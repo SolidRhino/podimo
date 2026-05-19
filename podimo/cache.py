@@ -44,7 +44,9 @@ podcast_cache = Cache(join(CACHE_DIR, 'podcast_cache'))
 # which makes it perfect for caching.
 head_cache = Cache(join(CACHE_DIR, 'head_cache'))
 
-def getCacheEntry(key: str, cache, delete=True):
+from typing import Any, Optional, Tuple
+
+def getCacheEntry(key: str, cache: Any, delete: bool = True) -> Optional[Any]:
     if key in cache:
         timestamp, value = cache[key]
         if timestamp < time():
@@ -54,18 +56,18 @@ def getCacheEntry(key: str, cache, delete=True):
         else:
             return value
 
-def getHeadEntry(id: str):
+def getHeadEntry(id: str) -> Optional[Tuple[str, str]]:
     return getCacheEntry(id, head_cache, False)
 
-def insertCacheEntry(key, value, timeout, cache):
+def insertCacheEntry(key: str, value: Any, timeout: int, cache: Any) -> None:
     cache[key] = (time() + timeout, value)
 
-def insertIntoTokenCache(key, value):
+def insertIntoTokenCache(key: str, value: str) -> None:
     insertCacheEntry(key, value, TOKEN_CACHE_TIME, TOKENS)
 
-def insertIntoHeadCache(key, content_length, content_type):
+def insertIntoHeadCache(key: str, content_length: str, content_type: str) -> None:
     insertCacheEntry(key, (content_length, content_type), HEAD_CACHE_TIME, head_cache)
 
-def insertIntoPodcastCache(key, podcast):
+def insertIntoPodcastCache(key: str, podcast: Any) -> None:
     insertCacheEntry(key, podcast, PODCAST_CACHE_TIME, podcast_cache)
 

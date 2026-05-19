@@ -22,8 +22,9 @@ from random import choice, randint
 from hashlib import sha256
 import asyncio
 from functools import wraps, partial
+from typing import Optional, Dict, Any, Callable
 
-def randomHexId(length: int):
+def randomHexId(length: int) -> str:
     string = []
     hex_chars = list("1234567890abcdef")
     for _ in range(length):
@@ -31,24 +32,24 @@ def randomHexId(length: int):
     return "".join(string)
 
 
-def randomFlyerId():
+def randomFlyerId() -> str:
     a = randint(1000000000000, 9999999999999)
     b = randint(1000000000000, 9999999999999)
     return str(f"{a}-{b}")
 
 
-def token_key(username, password):
+def token_key(username: str, password: str) -> str:
     key = sha256(
         b"~".join([username.encode("utf-8"), password.encode("utf-8")])
     ).hexdigest()
     return key
 
 # Verify if it is actually an email address
-def is_correct_email_address(username):
+def is_correct_email_address(username: str) -> bool:
     return "@" in parseaddr(username)[1]
 
 
-def generateHeaders(authorization, locale):
+def generateHeaders(authorization: Optional[str], locale: str) -> Dict[str, str]:
     headers = {
         'user-os': 'android',
         'user-agent': 'Podimo/2.45.1 build 566/Android 33',
@@ -60,9 +61,10 @@ def generateHeaders(authorization, locale):
         headers["authorization"] = authorization
     return headers
 
-def async_wrap(func):
+
+def async_wrap(func: Callable) -> Callable:
     @wraps(func)
-    async def run(*args, loop=None, executor=None, **kwargs):
+    async def run(*args: Any, loop: Optional[asyncio.AbstractEventLoop] = None, executor: Optional[Any] = None, **kwargs: Any):
         if loop is None:
             loop = asyncio.get_event_loop()
         pfunc = partial(func, *args, **kwargs)

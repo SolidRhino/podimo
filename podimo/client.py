@@ -24,13 +24,26 @@ from podimo.utils import (is_correct_email_address, token_key,
 from podimo.cache import insertIntoPodcastCache, getCacheEntry, podcast_cache
 from time import time
 import logging
+from typing import Optional, Dict, Any
+
+class PodimoError(Exception):
+    """Base exception for Podimo API errors."""
+    pass
+
+class PodcastNotFoundError(PodimoError):
+    """Raised when a podcast cannot be found."""
+    pass
+
+class AuthenticationError(PodimoError):
+    """Raised when login credentials are invalid."""
+    pass
 
 if ZENROWS_API is not None:
     from zenrows import ZenRowsClient
 
-_zenrows_client = None
+_zenrows_client: Optional[ZenRowsClient] = None
 
-def _get_zenrows_client():
+def _get_zenrows_client() -> Optional[ZenRowsClient]:
     global _zenrows_client
     if _zenrows_client is None and ZENROWS_API is not None:
         _zenrows_client = ZenRowsClient(ZENROWS_API)
@@ -38,11 +51,15 @@ def _get_zenrows_client():
 
 class PodimoClient:
     def __init__(self, username: str, password: str, region: str, locale: str):
-        self.username = username
-        self.password = password
-        self.region = region
-        self.locale = locale
-        self.cookie_jar = None
+        self.username: str = username
+        self.password: str = password
+        self.region: str = region
+        self.locale: str = locale
+        self.cookie_jar: Optional[Any] = None
+        self.key: str = token_key(username, password)
+        self.token: Optional[str] = None
+        self.preauth_token: Optional[str] = None
+        self.prereg_id: Optional[str] = None
 
         if len(self.username) == 0 or len(self.password) == 0:
             raise ValueError("Empty username or password")
@@ -51,13 +68,10 @@ class PodimoClient:
         if not is_correct_email_address(username):
             raise ValueError("Email is not in the correct format")
 
-        self.key = token_key(username, password)
-        self.token = None
-
-    def generateHeaders(self, authorization):
+    def generateHeaders(self, authorization: Optional[str]) -> Dict[str, str]:
         return gHdrs(authorization, self.locale)
 
-    async def post(self, headers, query, variables, scraper):
+    async def post(self, headers: Dict[str, str], query: str, variables: Dict[str, Any], scraper: Any) -> Dict[str, Any]:
         if SCRAPER_API is not None:
             POST_URL = f"https://api.scraperapi.com?api_key={SCRAPER_API}&url={GRAPHQL_URL}&keep_headers=true"
         elif ZENROWS_API is not None:
@@ -82,7 +96,7 @@ class PodimoClient:
 
     # This gets the authentication token that is required for subsequent requests
     # as an anonymous user
-    async def getPreregisterToken(self, scraper):
+    async def getPreregisterToken(self, scraper: Any) -> str:
         headers = self.generateHeaders(None)
         logging.debug("AuthorizationPreregisterUser")
         query = """
@@ -110,8 +124,7 @@ class PodimoClient:
         return self.preauth_token
 
 
-    # Gets an "onboarding ID" that is used during login
-    async def getOnboardingId(self, scraper):
+    async def getOnboardingId(self, scraper: Any) -> str:
         headers = self.generateHeaders(self.preauth_token)
         logging.debug("OnboardingQuery")
         query = """
@@ -127,7 +140,7 @@ class PodimoClient:
         return self.prereg_id
 
 
-    async def podimoLogin(self, scraper):
+    async def podimoLogin(self, scraper: Any) -> str:
             await self.getPreregisterToken(scraper)
             await self.getOnboardingId(scraper)
 
@@ -154,15 +167,15 @@ class PodimoClient:
             result = await self.post(headers, query, variables, scraper)
             tokenWithCredentials = result["tokenWithCredentials"]
             if not tokenWithCredentials:
-                raise ValueError("Invalid Podimo credentials, did not receive tokenWithCredentials")
+                raise AuthenticationError("Invalid Podimo credentials, did not receive tokenWithCredentials")
 
             self.token = result["tokenWithCredentials"]["token"]
             if self.token:
                 return self.token
             else:
-                raise ValueError("Invalid Podimo credentials, did not receive token")
+                raise AuthenticationError("Invalid Podimo credentials, did not receive token")
 
-    async def getPodcasts(self, podcast_id, scraper):
+    async def getPodcasts(self, podcast_id: str, scraper: Any) -> Dict[str, Any]:
         podcast = getCacheEntry(podcast_id, podcast_cache)
         if podcast:
             timestamp, _ = podcast_cache[podcast_id]
@@ -218,6 +231,7 @@ class PodimoClient:
 
         limit = 100
         offset = 0
+        fullResult: Optional[Dict[str, Any]] = None
         while True:
             variables = {
                 "podcastId": podcast_id,
@@ -227,12 +241,12 @@ class PodimoClient:
             }
             result = await self.post(headers, query, variables, scraper)
             if offset == 0:
-                # podcastName = result[0]['podcastName']
                 podcastName = self.getPodcastName(result)
                 logging.debug(f"Fetched podcast '{podcastName}' ({podcast_id}) directly")
                 fullResult = result
             else:
-                fullResult["episodes"] += result["episodes"]
+                if fullResult is not None:
+                    fullResult["episodes"] += result["episodes"]
             numEpisodes = len(result["episodes"])
             if numEpisodes == limit:
                 logging.debug(f"Fetched {numEpisodes} episodes; fetching more...")
@@ -241,9 +255,12 @@ class PodimoClient:
                 logging.debug(f"Fetched {numEpisodes} episodes; no more to fetch")
                 break
         
-        insertIntoPodcastCache(podcast_id, fullResult)
-        return fullResult
+        if fullResult is not None:
+            insertIntoPodcastCache(podcast_id, fullResult)
+            return fullResult
+        else:
+            raise PodcastNotFoundError(f"Podcast {podcast_id} not found or empty response")
 
-    def getPodcastName(self, podcast):
+    def getPodcastName(self, podcast: Dict[str, Any]) -> str:
         return podcast.get("podcast", {}).get("title", "Unknown")
        
