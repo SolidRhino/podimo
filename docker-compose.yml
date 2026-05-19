@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  podimo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    # Local image name after docker compose build
+    # Falls back to ghcr.io/thijsray/podimo:latest if you prefer the upstream image
+    image: podimo:latest
+    container_name: podimo-rss
+    restart: unless-stopped
+    ports:
+      - "12104:12104"
+    env_file:
+      - .env
+    volumes:
+      # Persist cache (tokens, podcast episodes, HEAD metadata) across restarts
+      - podimo-cache:/src/cache
+      # Optional: mount a local block-list file
+      # - ./.block-list:/src/.block-list:ro
+    environment:
+      # Override bind host so the container listens on all interfaces
+      PODIMO_BIND_HOST: "0.0.0.0:12104"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:12104/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # If using a proxy (e.g. Zenrows / ScraperAPI), pass through HTTP_PROXY
+    # network_mode: host
+
+volumes:
+  podimo-cache:
+    driver: local
