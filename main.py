@@ -69,8 +69,19 @@ def limit_request() -> Callable:
         return wrapper
     return rate_limiter
 @app.before_request
-async def log_request():
-    logging.debug(f"Incoming {request.method} request for '{request.url}' from User-Agent {request.user_agent} at {request.remote_addr}.")
+async def log_request_start():
+    request._start_time = time.time()  # type: ignore[attr-defined]
+    logging.debug(f"--> {request.method} {request.url} from {request.remote_addr} UA={request.user_agent}")
+
+@app.after_request
+async def log_request_end(response):
+    start_time = getattr(request, '_start_time', None)
+    if start_time:
+        duration = time.time() - start_time
+        logging.debug(f"<-- {request.method} {request.url} {response.status_code} ({duration:.3f}s)")
+    else:
+        logging.debug(f"<-- {request.method} {request.url} {response.status_code}")
+    return response
 
 
 def example() -> str:
@@ -260,8 +271,8 @@ async def serve_feed(username: str, password: str, podcast_id: str, region: str,
             logging.error(f"Podimo API error: {e}")
             return Response("Something went wrong while fetching the podcasts", 500, {})
         except Exception as e:
-            exception = str(e)
-            logging.error(f"Error while fetching podcasts: {exception}")
+            # Catch-all for unexpected errors (network, parsing, etc.)
+            logging.error(f"Unexpected error while fetching podcasts: {e}")
             return Response("Something went wrong while fetching the podcasts", 500, {})
         return Response(podcasts, mimetype="text/xml")
 
