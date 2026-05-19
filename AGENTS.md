@@ -7,10 +7,11 @@
 
 **Podimo to RSS** is a self-hosted Python web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
 
-- **Language:** Python 3.10+
+- **Language:** Python 3.10+ (fully typed, `mypy` passing)
 - **Framework:** Quart (async Flask-like) + Hypercorn
 - **API:** Podimo GraphQL (`https://podimo.com/graphql`)
 - **Auth:** HTTP Basic Auth (credentials embedded in URL) or local credentials mode
+- **Tests:** pytest + pytest-asyncio (3 test modules)
 - **License:** EUPL 1.2
 
 ## Quick Architecture
@@ -22,7 +23,8 @@ podimo/
   config.py          → Environment variables, constants, block list
   cache.py           → diskcache-backed token, podcast, and HEAD caches
   utils.py           → Header generation, async wrapping, helpers
-templates/           → Jinja2 HTML (index form, feed result with QR code)
+tests/               → pytest suite (client, RSS, web routes)
+mypy.ini             → mypy configuration (ignores missing third-party stubs)
 ```
 
 ## Key Files & Responsibilities
@@ -30,12 +32,16 @@ templates/           → Jinja2 HTML (index form, feed result with QR code)
 | File | What it does |
 |------|------------|
 | `main.py` | Entry point. Defines routes (`/`, `/feed/<id>.xml`, `/feed/<u>/<p>/<id>.xml`). Generates RSS XML via `feedgen`. |
-| `podimo/client.py` | PodimoGraphQL client. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. |
+| `podimo/client.py` | Podimo GraphQL client. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. |
 | `podimo/config.py` | Loads `.env` + env vars. Defines regions, locales, cache TTLs, feature flags. |
 | `podimo/cache.py` | Three diskcache instances: `TOKENS` (auth tokens), `podcast_cache` (episode lists), `head_cache` (audio file metadata). |
 | `podimo/utils.py` | `generateHeaders()` (spoofs Android app), `async_wrap()` (sync→async bridge), `token_key()` (SHA256 cache key). |
-| `templates/index.html` | Form: email, password, podcast ID, region, locale. Extracts UUID from full Podimo URLs. |
+| `templates/index.html` | Form: email, password, podcast ID, region, locale. Extracts UUID from full Podimo URLs. Shows warning when credentials are embedded in URL. |
 | `templates/feed_location.html` | Shows generated feed URL with copy button and QR code. |
+| `tests/conftest.py` | Shared pytest fixtures (mock podcast data with/without episodes). |
+| `tests/test_client.py` | Tests for `PodimoClient` constructor, `getPodcastName`, `token_key`. |
+| `tests/test_rss.py` | Tests for `podcastsToRss`, `extract_audio_url`, content-type logic. |
+| `tests/test_web.py` | Tests for Quart routes, UUID regex validation, rate limiting. |
 
 ## Authentication Flow (Podimo GraphQL)
 
@@ -59,7 +65,7 @@ All subsequent requests (episode fetching) use the final token in the `authoriza
 ## Important Code Patterns
 
 ### Sync→Async Bridge
-`cloudscraper` and `ZenRowsClient` are synchronous. They are wrapped via `async_wrap()` (uses `loop.run_in_executor`). This is wasteful but functional:
+`cloudscraper` and `ZenRowsClient` are synchronous. They are wrapped via `async_wrap()` (uses `loop.run_in_executor`). `ZenRowsClient` is a **lazy singleton** — created once at first use, not per request.
 
 ```python
 response = await async_wrap(scraper.post)(url, headers=..., json=..., timeout=...)
@@ -78,6 +84,20 @@ Episodes are added to the RSS feed in chunks of 5 with `asyncio.gather` to paral
 for chunk in chunks(episodes, 5):
     await asyncio.gather(*[addFeedEntry(fg, ep, session, locale) for ep in chunk])
 ```
+
+### Rate Limiting
+Feed endpoints (`/feed/...`) are protected by a per-IP rate limiter (8 requests per 10-second window):
+```python
+@app.route("/feed/<...")
+@limit_request()
+async def serve_feed(...):
+```
+
+### Custom Exceptions
+The client raises structured exceptions instead of generic `RuntimeError`:
+- `PodimoError` — base exception
+- `PodcastNotFoundError` — podcast ID doesn't exist
+- `AuthenticationError` — invalid credentials
 
 ## Common Tasks
 
@@ -107,6 +127,13 @@ python main.py
 # Visit http://localhost:12104
 ```
 
+### Running tests
+```bash
+pip install -r requirements.txt
+pytest -v
+mypy podimo/ main.py
+```
+
 ### Running in Docker
 ```bash
 docker build -t podimo-rss .
@@ -115,36 +142,51 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 
 ## Known Gotchas & Pitfalls
 
-1. **`return ValueError(...)` instead of `raise`** — `podimo/client.py:39` has a real bug where it returns an exception object instead of raising it.
-2. **Fragile `getPodcastName`** — `podimo/client.py` uses `list(podcast.values())[1]["title"]` which assumes dict insertion order. Breaks if Podimo adds fields.
-3. **Backwards content-type logic** — `main.py` overwrites `guess_type()` results with `audio/mpeg`.
-4. **Empty episode list = malformed RSS** — if a podcast has 0 episodes, `feedgen` emits an empty/broken feed.
-5. **ZenRowsClient created per request** — wasteful, should be a singleton.
-6. **Block list uses substring matching** — a blocked UUID fragment could accidentally match other podcast IDs.
-7. **No rate limiting** — the `/feed/...` endpoint can be hammered, and each hit triggers Podimo GraphQL calls.
-8. **CORS wildcard** — `Access-Control-Allow-Origin: *` on all responses including RSS feeds.
-9. **Debug enabled in template** — `.env.example` ships with `DEBUG=true` uncommented.
-10. **Docker runs as root** and leaves build dependencies (`gcc`, `libc-dev`, etc.) in the final image.
+✅ **FIXED** — `return ValueError(...)` instead of `raise` in `client.py`  
+✅ **FIXED** — Fragile `getPodcastName` via dict insertion order  
+✅ **FIXED** — Backwards content-type logic overwriting correct MIME types  
+✅ **FIXED** — Empty episode list producing malformed RSS  
+✅ **FIXED** — `ZenRowsClient` created per request (now a lazy singleton)  
+✅ **FIXED** — Block list using substring matching (now exact match)  
+✅ **FIXED** — No rate limiting (added per-IP limit: 8 req/10s)  
+✅ **FIXED** — CORS wildcard on all responses (removed)  
+✅ **FIXED** — Docker running as root with build deps (now multi-stage + non-root)  
+
+**Remaining:**
+- **Debug enabled in template** — `.env.example` ships with `DEBUG=true` uncommented.
+- **`split_username_region_locale` silent fallback** — If the username doesn't contain exactly 2 commas, it silently defaults to Dutch (`nl`, `nl-NL`). This is intentional for podcast app compatibility but can surprise non-Dutch users. **Do not change without a migration plan** — existing feed URLs would break.
+- **String exception matching still partially present** — The `except Exception` fallback in `serve_feed` still string-matches as a last resort. The primary path now uses structured `PodimoError` subclasses.
+- **Logging at `@app.before_request`** — Request logging happens before processing, so errors during the request are logged *after* the initial log line.
 
 ## Testing
 
-There are **no automated tests** in this project. Manual verification steps:
-1. Start the server (`make start` or `python main.py`)
-2. Open `http://localhost:12104`
-3. Enter valid Podimo credentials and a podcast UUID from `open.podimo.com`
-4. Copy the generated feed URL into a podcast app or `curl`
-5. Verify the RSS XML contains `<enclosure>` tags with audio URLs
-6. Check logs for errors (`make logs` if running as systemd service)
+There is now a **pytest suite** with 3 test modules:
+
+| File | Coverage |
+|------|----------|
+| `tests/test_client.py` | `PodimoClient` constructor validation, `getPodcastName`, `token_key` |
+| `tests/test_rss.py` | `podcastsToRss` with/without episodes, `extract_audio_url`, content-type logic |
+| `tests/test_web.py` | Quart routes (`/` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
+
+Run with:
+```bash
+pytest -v
+pytest --cov=podimo --cov=main tests/  # with coverage
+```
 
 ## Dependencies
 
-See `requirements.txt`. Key ones:
+See `requirements.txt`. Key runtime deps:
 - `quart` + `hypercorn` — async web server
 - `feedgen` — RSS/Atom generation
 - `aiohttp` — async HTTP client (for HEAD requests)
 - `cloudscraper` — bypasses Cloudflare bot detection (sync)
 - `diskcache` — disk-backed key-value cache
 - `zenrows` + `scraperapi` — optional proxy services
+
+Dev/test deps:
+- `pytest` + `pytest-asyncio`
+- `mypy`
 
 ## Environment Reference
 
@@ -164,16 +206,21 @@ See `requirements.txt`. Key ones:
 ## Security Notes for Agents
 
 - **Never commit real credentials** to `.env` or the repo. `.env` is in `.gitignore`.
-- **Credentials in URLs** are unavoidable for podcast app compatibility, but warn users. The UI should display a prominent notice.
+- **Credentials in URLs** are unavoidable for podcast app compatibility, but warn users. The UI now displays a prominent notice when `need_credentials=true`.
 - **Use `LOCAL_CREDENTIALS=true`** for personal instances to avoid embedding passwords in URLs.
 - **Always run behind HTTPS** (reverse proxy) in production — Basic Auth is cleartext otherwise.
 - **Auth tokens are sensitive** — they grant full Podimo account access. `STORE_TOKENS_ON_DISK` should be `false` on shared/multi-user instances.
+- **Rate limiting is active** — 8 requests per 10-second window per IP on feed endpoints.
 
 ## Refactoring Opportunities
 
 If modifying this codebase, consider:
-- Replacing `cloudscraper` + `async_wrap` with an async-native anti-bot client (or reusing a single session).
-- Adding `pytest` + `pytest-asyncio` tests for the GraphQL client.
-- Adding rate limiting (e.g., `slowapi` or `quart-rate-limiter`).
-- Cleaning the Dockerfile to use multi-stage builds and drop build deps.
-- Replacing substring-based block list with exact UUID matching.
+- ~~Replacing `cloudscraper` + `async_wrap` with an async-native anti-bot client~~ (deferred — working well enough)
+- ~~Adding `pytest` + `pytest-asyncio` tests~~ ✅ Done
+- ~~Adding rate limiting~~ ✅ Done (lightweight in-memory)
+- ~~Cleaning the Dockerfile~~ ✅ Done (multi-stage + non-root)
+- ~~Replacing substring-based block list~~ ✅ Done (exact match)
+- Adding more granular rate limits per-user (currently IP-based only)
+- Moving from `diskcache` to `redis` or similar for multi-instance deployments
+- Adding health check endpoint (`/health`) for Docker orchestration
+- Configuring `mypy --strict` (currently using basic config in `mypy.ini`)
