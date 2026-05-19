@@ -21,7 +21,9 @@ import asyncio
 import re
 import sys
 import logging
+import time
 from os import getenv
+from functools import wraps
 from podimo.client import PodimoClient
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
@@ -48,7 +50,23 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-def example():
+proactive = dict()
+
+def limit_request():
+    def rate_limiter(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            ip = request.remote_addr or 'unknown'
+            now = time.time()
+            reqs = proactive.get(ip, [])
+            reqs = [t for t in reqs if now - t < 10]
+            reqs.append(now)
+            proactive[ip] = reqs
+            if len(reqs) > 8:
+                return Response('Rate limit exceeded', 429)
+            return await func(*args, **kwargs)
+        return wrapper
+    return rate_limiter
     return f"""Example
 ------------
 Username: example@example.com
@@ -61,14 +79,6 @@ https://example%40example.com:this-is-my-password@{PODIMO_HOSTNAME}/feed/12345-a
 Note that the username and password should be URL encoded. This can be done with
 a tool like https://gchq.github.io/CyberChef/#recipe=URL_Encode(true)
 """
-
-@app.after_request
-def allow_cors(response):
-    response.headers.set('Access-Control-Allow-Origin', '*')
-    response.headers.set('Access-Control-Allow-Methods', 'GET, POST')
-    response.headers.set('Cache-Control', 'max-age=900')
-    logging.debug(f"Incoming {request.method} request for '{request.url}' from User-Agent {request.user_agent} at {request.remote_addr}.")
-    return response
 
 def authenticate():
     return Response(
@@ -113,7 +123,7 @@ async def check_auth(username, password, region, locale, scraper):
             traceback.print_exc()
     return None
 
-podcast_id_pattern = re.compile(r"[0-9a-fA-F\-]+")
+podcast_id_pattern = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 @app.route("/", methods=["POST", "GET"])
 async def index():
@@ -172,6 +182,7 @@ async def not_found(error):
 
 
 @app.route("/feed/<string:podcast_id>.xml")
+@limit_request()
 async def serve_basic_auth_feed(podcast_id):
     if LOCAL_CREDENTIALS:
         args = request.args
@@ -203,6 +214,7 @@ def token_key(username, password):
 
 
 @app.route("/feed/<string:username>/<string:password>/<string:podcast_id>.xml")
+@limit_request()
 async def serve_feed(username, password, podcast_id, region, locale):
     
     logging.debug(f"Feed request for podcast {podcast_id} from IP {request.remote_addr} with User-Agent:{request.user_agent}.")
@@ -216,8 +228,8 @@ async def serve_feed(username, password, podcast_id, region, locale):
     if locale not in LOCALES:
         return Response("Invalid locale", 400, {})
 
-    # Check if url contains unique ID or podcastID in blocked list. If so, return HTTP code 410 GONE
-    if any(item in request.url for item in BLOCKED):
+    # Check if podcastID in blocked list. If so, return HTTP code 410 GONE
+    if podcast_id in BLOCKED:
         logging.debug(f"Blocked! Podcast {podcast_id} is on local block list")
         return Response("Podcast is gone", 410, {}) 
     

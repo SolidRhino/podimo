@@ -24,8 +24,17 @@ from podimo.utils import (is_correct_email_address, token_key,
 from podimo.cache import insertIntoPodcastCache, getCacheEntry, podcast_cache
 from time import time
 import logging
+
 if ZENROWS_API is not None:
     from zenrows import ZenRowsClient
+
+_zenrows_client = None
+
+def _get_zenrows_client():
+    global _zenrows_client
+    if _zenrows_client is None and ZENROWS_API is not None:
+        _zenrows_client = ZenRowsClient(ZENROWS_API)
+    return _zenrows_client
 
 class PodimoClient:
     def __init__(self, username: str, password: str, region: str, locale: str):
@@ -52,8 +61,8 @@ class PodimoClient:
         if SCRAPER_API is not None:
             POST_URL = f"https://api.scraperapi.com?api_key={SCRAPER_API}&url={GRAPHQL_URL}&keep_headers=true"
         elif ZENROWS_API is not None:
-            scraper = ZenRowsClient(ZENROWS_API)
             POST_URL = GRAPHQL_URL
+            scraper = _get_zenrows_client()
         else:
             POST_URL = GRAPHQL_URL
         response = await async_wrap(scraper.post)(POST_URL,
