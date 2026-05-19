@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock, AsyncMock, patch
 from main import app, podcast_id_pattern
 
 
@@ -40,6 +41,51 @@ class TestWebRoutes:
             assert response.status_code == 404
             body = await response.get_data()
             assert b'404' in body or b'Example' in body
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_blocks_after_threshold(self):
+        """After 8 requests from the same IP, the 9th should return 429."""
+        async with app.test_client() as client:
+            # Make 8 requests quickly
+            for _ in range(8):
+                response = await client.get('/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml')
+                # These may return 401 (no auth) but should NOT be 429
+                assert response.status_code != 429
+
+            # The 9th request should be rate limited
+            response = await client.get('/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml')
+            assert response.status_code == 429
+            body = await response.get_data()
+            assert b'Rate limit exceeded' in body
+
+    @pytest.mark.asyncio
+    async def test_serve_basic_auth_feed_without_auth(self):
+        """Feed endpoint without Basic Auth should return 401."""
+        async with app.test_client() as client:
+            response = await client.get('/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml')
+            assert response.status_code == 401
+            body = await response.get_data()
+            assert b'401 Unauthorized' in body or b'Unauthorized' in body
+
+    @pytest.mark.asyncio
+    async def test_serve_basic_auth_feed_invalid_region(self):
+        """Feed endpoint with invalid region should return 400."""
+        async with app.test_client() as client:
+            response = await client.get(
+                '/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml',
+                headers={'Authorization': 'Basic dXNlcixpbnZhbGlkLGluLXZhbGlk'}  # user,invalid,en
+            )
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_serve_basic_auth_feed_invalid_locale(self):
+        """Feed endpoint with invalid locale should return 400."""
+        async with app.test_client() as client:
+            response = await client.get(
+                '/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml',
+                headers={'Authorization': 'Basic dXNlcixubCxpbi12YWxpZA=='}  # user,nl,invalid
+            )
+            assert response.status_code == 400
 
 
 class TestPodcastIdRegex:
