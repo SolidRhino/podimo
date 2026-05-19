@@ -42,7 +42,7 @@ import traceback
 
 # Setup Quart, used for serving the web pages
 app = Quart(__name__)
-proxies = dict()
+proxies: Dict[str, str] = dict()
 
 #Setup logging
 logging.basicConfig(
@@ -51,7 +51,7 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-proactive = dict()
+proactive: Dict[str, List[float]] = dict()
 
 def limit_request() -> Callable:
     def rate_limiter(func: Callable) -> Callable:
@@ -121,7 +121,8 @@ async def check_auth(username: str, password: str, region: str, locale: str, scr
             return client
 
         await client.podimoLogin(scraper)
-        cache.insertIntoTokenCache(client.key, client.token)
+        if client.token:
+            cache.insertIntoTokenCache(client.key, client.token)
         return client
 
     except Exception as e:
@@ -208,7 +209,7 @@ async def serve_basic_auth_feed(podcast_id):
 def split_username_region_locale(string: str) -> Tuple[str, str, str]:
     s = string.split(',')
     if len(s) == 3:
-        return tuple(s)
+        return (s[0], s[1], s[2])
     else:
         return (s[0], 'nl', 'nl-NL')
 
@@ -279,7 +280,7 @@ async def urlHeadInfo(session: ClientSession, id: str, url: str, locale: str) ->
             async with session.head(url, allow_redirects=True,
                                     headers=generateHeaders(None, locale),
                                     timeout=timeout) as response:
-                content_length = 0
+                content_length = '0'
                 content_type, _ = guess_type(url)
                 if 'content-length' in response.headers:
                     content_length = response.headers['content-length']
@@ -296,6 +297,10 @@ async def urlHeadInfo(session: ClientSession, id: str, url: str, locale: str) ->
                 logging.error(f"All retries failed for HEAD request to {url}")
                 raise  # Re-raise the last exception if all retries fail
 
+
+
+    # Unreachable, but satisfies mypy's control flow analysis
+    return ('0', 'audio/mpeg')
 
 
 def extract_audio_url(episode: Dict[str, Any]) -> Tuple[Optional[str], int]:
@@ -403,7 +408,7 @@ async def podcastsToRss(podcast_id: str, data: Dict[str, Any], locale: str) -> b
                 *[addFeedEntry(fg, episode, session, locale) for episode in chunk]
             )
 
-    feed = fg.rss_str(pretty=True)
+    feed: bytes = fg.rss_str(pretty=True)
     return feed
 
 

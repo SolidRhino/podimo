@@ -24,7 +24,7 @@ from podimo.utils import (is_correct_email_address, token_key,
 from podimo.cache import insertIntoPodcastCache, getCacheEntry, podcast_cache
 from time import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 
 class PodimoError(Exception):
     """Base exception for Podimo API errors."""
@@ -89,7 +89,7 @@ class PodimoClient:
             raise RuntimeError(f"Could not receive response for query: {query.strip()[:30]}...")
         if response.status_code != 200:
             raise RuntimeError(f"Podimo returned an error code. Response code was: {response.status_code} for query \"{query.strip()[:30]}...\"")
-        result = response.json()["data"]
+        result: Dict[str, Any] = response.json()["data"]
         if result is None:
             raise RuntimeError(f"Podimo returned no valid data for query {query.strip()[:30]}")
         return result
@@ -181,7 +181,7 @@ class PodimoClient:
             timestamp, _ = podcast_cache[podcast_id]
             podcastName = self.getPodcastName(podcast)
             logging.debug(f"Got podcast '{podcastName}' ({podcast_id}) from cache ({int(timestamp-time())} seconds left)")
-            return podcast
+            return cast(Dict[str, Any], podcast)
 
         headers = self.generateHeaders(self.token)
         logging.debug("ChannelEpisodesQuery")
@@ -262,5 +262,6 @@ class PodimoClient:
             raise PodcastNotFoundError(f"Podcast {podcast_id} not found or empty response")
 
     def getPodcastName(self, podcast: Dict[str, Any]) -> str:
-        return podcast.get("podcast", {}).get("title", "Unknown")
+        title = podcast.get("podcast", {}).get("title", "Unknown")
+        return str(title)
        

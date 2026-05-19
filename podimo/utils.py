@@ -77,6 +77,6 @@ async def video_exists_at_url(url: str) -> bool:
         async with ClientSession() as session:
             async with session.get(url, timeout=ClientTimeout(total=10)) as res:
                 text = await res.text()
-                return text.strip().startswith("#EXTM3U")
+                return bool(text.strip().startswith("#EXTM3U"))
     except Exception:
         return False

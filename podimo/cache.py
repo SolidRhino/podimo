@@ -32,7 +32,7 @@ if STORE_TOKENS_ON_DISK:
 
 # Give each user its own cookie jar to keep track of cookies that are
 # being set and used between different requests.
-cookie_jars = dict()
+cookie_jars: Dict[str, Any] = dict()
 
 url_cache = Cache(join(CACHE_DIR, 'url_cache'))
 podcast_cache = Cache(join(CACHE_DIR, 'podcast_cache'))
@@ -55,6 +55,7 @@ def getCacheEntry(key: str, cache: Any, delete: bool = True) -> Optional[Any]:
             return None
         else:
             return value
+    return None
 
 def getHeadEntry(id: str) -> Optional[Tuple[str, str]]:
     return getCacheEntry(id, head_cache, False)
