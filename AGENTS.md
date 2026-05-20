@@ -1,7 +1,7 @@
 # Agent Context: Podimo to RSS
 
 > This file provides context for AI assistants working on the codebase.
-> Last updated: 2025
+> Last updated: 2026-05-20
 
 ## Language Policy
 
@@ -20,11 +20,12 @@ Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only wher
 
 **Podimo to RSS** is a self-hosted Python web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
 
-- **Language:** Python 3.10+ (fully typed, `mypy` passing)
+- **Language:** Python 3.12+ (fully typed, `mypy` passing)
 - **Framework:** Quart (async Flask-like) + Hypercorn
 - **API:** Podimo GraphQL (`https://podimo.com/graphql`)
 - **Auth:** HTTP Basic Auth (credentials embedded in URL) or local credentials mode
-- **Tests:** pytest + pytest-asyncio (3 test modules)
+- **Tests:** pytest + pytest-asyncio (70 tests across 4 modules)
+- **CI:** GitHub Actions — test matrix on Python 3.10/3.11/3.12, Docker image publishing to GHCR
 - **License:** EUPL 1.2
 
 ## Quick Architecture
@@ -36,25 +37,26 @@ podimo/
   config.py          → Environment variables, constants, block list
   cache.py           → diskcache-backed token, podcast, and HEAD caches
   utils.py           → Header generation, async wrapping, helpers
-tests/               → pytest suite (client, RSS, web routes)
+tests/               → pytest suite (client, RSS, web routes, utils)
 mypy.ini             → mypy configuration (ignores missing third-party stubs)
 ```
 
 ## Key Files & Responsibilities
 
 | File | What it does |
-|------|------------|
-| `main.py` | Entry point. Defines routes (`/`, `/feed/<id>.xml`, `/feed/<u>/<p>/<id>.xml`). Generates RSS XML via `feedgen`. |
+|------|-------------|
+| `main.py` | Entry point. Defines routes (`/`, `/health`, `/feed/<id>.xml`, `/feed/<u>/<p>/<id>.xml`). Generates RSS XML via `feedgen`. |
 | `podimo/client.py` | Podimo GraphQL client. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. |
 | `podimo/config.py` | Loads `.env` + env vars. Defines regions, locales, cache TTLs, feature flags. |
 | `podimo/cache.py` | Three diskcache instances: `TOKENS` (auth tokens), `podcast_cache` (episode lists), `head_cache` (audio file metadata). |
-| `podimo/utils.py` | `generateHeaders()` (spoofs Android app), `async_wrap()` (sync→async bridge), `token_key()` (SHA256 cache key). |
-| `templates/index.html` | Form: email, password, podcast ID, region, locale. Extracts UUID from full Podimo URLs. Shows warning when credentials are embedded in URL. |
+| `podimo/utils.py` | `generateHeaders()` (spoofs Android app), `async_wrap()` (sync→async bridge), `token_key()` (SHA256 cache key), `is_correct_email_address()`. |
+| `templates/index.html` | Form: email, password, podcast ID, region, locale. Extracts UUID from full Podimo URLs via JS regex. Shows warning when credentials are embedded in URL. |
 | `templates/feed_location.html` | Shows generated feed URL with copy button and QR code. |
-| `tests/conftest.py` | Shared pytest fixtures (mock podcast data with/without episodes). |
+| `tests/conftest.py` | Shared pytest fixtures (mock podcast data with/without episodes, reset rate limiter). |
 | `tests/test_client.py` | Tests for `PodimoClient` constructor, `getPodcastName`, `token_key`. |
-| `tests/test_rss.py` | Tests for `podcastsToRss`, `extract_audio_url`, content-type logic. |
-| `tests/test_web.py` | Tests for Quart routes, UUID regex validation, rate limiting. |
+| `tests/test_rss.py` | Tests for `podcastsToRss`, `extract_audio_url`, content-type logic, `urlHeadInfo`. |
+| `tests/test_web.py` | Tests for Quart routes (`/`, `/health`, 404, 400 for invalid UUID), UUID regex, rate limiting. |
+| `tests/test_utils.py` | Tests for `is_correct_email_address`, `generateHeaders`, `chunks`, `async_wrap`. |
 
 ## Authentication Flow (Podimo GraphQL)
 
@@ -123,6 +125,15 @@ Requests are logged at both start and completion with timing:
 # <-- GET /feed/12345-...xml 200 (0.423s)
 ```
 
+### Health Check Endpoint
+A lightweight `/health` endpoint returns `{"status": "ok", "service": "podimo-rss"}`. This is used by Docker `HEALTHCHECK` and orchestration tools (Kubernetes, Docker Compose, etc.). The endpoint has no external dependencies and should always return 200.
+
+```python
+@app.route("/health")
+async def health():
+    return jsonify({"status": "ok", "service": "podimo-rss"})
+```
+
 ## Common Tasks
 
 ### Adding a new region/locale
@@ -178,19 +189,27 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)  
 ✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` subclasses)  
 ✅ **FIXED** — Logging only at `@app.before_request` (now logs both start and end with duration + status code)  
+✅ **FIXED** — No `/health` endpoint for Docker orchestration (added lightweight JSON health probe)
 
 **Remaining:**
 - **`split_username_region_locale` silent fallback** — If the username doesn't contain exactly 2 commas, it silently defaults to Dutch (`nl`, `nl-NL`). This is intentional for podcast app compatibility but can surprise non-Dutch users. **Do not change without a migration plan** — existing feed URLs would break.
 
+## Podcast ID Discovery
+
+Currently, users must manually find the podcast ID from Podimo's website or app. The web form (`templates/index.html`) will extract the UUID from a pasted Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) via client-side JavaScript regex.
+
+**Future improvement:** Add a `/search?q=<query>` endpoint that queries Podimo's GraphQL `searchPodcasts` (if available in the API schema) so users can search by name without visiting Podimo's website. Alternatively, fetch the user's subscribed podcasts after login and present them as a selectable list.
+
 ## Testing
 
-There is now a **pytest suite** with 3 test modules:
+There is now a **pytest suite** with 4 test modules:
 
 | File | Coverage |
 |------|----------|
 | `tests/test_client.py` | `PodimoClient` constructor validation, `getPodcastName`, `token_key` |
-| `tests/test_rss.py` | `podcastsToRss` with/without episodes, `extract_audio_url`, content-type logic |
-| `tests/test_web.py` | Quart routes (`/` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
+| `tests/test_rss.py` | `podcastsToRss` with/without episodes, `extract_audio_url`, `urlHeadInfo`, content-type logic |
+| `tests/test_web.py` | Quart routes (`/` 200, `/health` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
+| `tests/test_utils.py` | `is_correct_email_address`, `generateHeaders`, `chunks`, `async_wrap` |
 
 Run with:
 ```bash
@@ -201,16 +220,18 @@ pytest --cov=podimo --cov=main tests/  # with coverage
 ## Dependencies
 
 See `requirements.txt`. Key runtime deps:
-- `quart` + `hypercorn` — async web server
-- `feedgen` — RSS/Atom generation
-- `aiohttp` — async HTTP client (for HEAD requests)
-- `cloudscraper` — bypasses Cloudflare bot detection (sync)
-- `diskcache` — disk-backed key-value cache
-- `zenrows` + `scraperapi` — optional proxy services
+- `quart` (~=0.20.0) + `hypercorn` (~=0.17.0) — async web server
+- `feedgen` (~=0.9.0) — RSS/Atom generation
+- `aiohttp` (~=3.13.5) — async HTTP client (for HEAD requests)
+- `cloudscraper` (~=1.2.71) — bypasses Cloudflare bot detection (sync)
+- `diskcache` (~=5.6.3) — disk-backed key-value cache
+- `zenrows` (~=1.3.2) + `scraperapi` — optional proxy services
 
 Dev/test deps:
-- `pytest` + `pytest-asyncio`
-- `mypy`
+- `pytest` (~=8.0.0) + `pytest-asyncio` (~=0.23.0) + `pytest-cov` (~=6.0.0)
+- `mypy` (~=1.8.0)
+
+**Security note:** `werkzeug` is pinned to `~=3.1.8` to include the GHSA-q34m-jh98-gwm2 fix (path traversal vulnerability in earlier 3.0.x releases). Do not downgrade.
 
 ## Environment Reference
 
@@ -244,10 +265,12 @@ If modifying this codebase, consider:
 - ~~Adding rate limiting~~ ✅ Done (lightweight in-memory)
 - ~~Cleaning the Dockerfile~~ ✅ Done (multi-stage + non-root)
 - ~~Replacing substring-based block list~~ ✅ Done (exact match)
+- ~~Adding health check endpoint~~ ✅ Done (`/health` JSON endpoint)
 - Adding more granular rate limits per-user (currently IP-based only)
 - Moving from `diskcache` to `redis` or similar for multi-instance deployments
-- Adding health check endpoint (`/health`) for Docker orchestration
+- ~~Adding `workflow_dispatch` to CI~~ ✅ Done (manual test runs)
 - Configuring `mypy --strict` (currently using basic config in `mypy.ini`)
+- Adding a `/search` endpoint via Podimo GraphQL search (if schema supports it)
 
 ## Developer Workflow
 
@@ -268,3 +291,20 @@ op plugin run -- gh pr create
 This ensures the `GITHUB_TOKEN` is injected from your 1Password vault for the duration of the command.
 
 If you **do not** use 1Password for GitHub auth, make sure `gh auth login` is run once to set up standard token-based authentication.
+
+### Running GitHub Actions locally with `act`
+
+You can test workflows locally using [`nektos/act`](https://nektosact.com/):
+
+```bash
+# Install with Homebrew
+brew install act
+
+# Dry-run to see what would execute
+act --dryrun
+
+# Run the Tests workflow (may need Docker socket path adjustments for Colima)
+act -j test -W .github/workflows/test.yml
+```
+
+**Known limitation on macOS + Colima:** `act` may fail to mount the Docker socket because Colima stores it in `~/.colima/` rather than `/var/run/docker.sock`. If you encounter this, either use Docker Desktop instead of Colima, or run CI directly on GitHub via PR.
