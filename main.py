@@ -29,7 +29,7 @@ from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, Authe
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
 from aiohttp import ClientSession, CookieJar, ClientTimeout
-from quart import Quart, Response, render_template, request
+from quart import Quart, Response, render_template, request, jsonify
 from hashlib import sha256
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
@@ -146,6 +146,15 @@ async def check_auth(username: str, password: str, region: str, locale: str, scr
     return None
 
 podcast_id_pattern = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+@app.route("/health")
+async def health():
+    """Health check endpoint for Docker orchestration.
+
+    Returns a 200 OK with basic service info. Lightweight enough
+    for frequent container health probes and load balancer checks.
+    """
+    return jsonify({"status": "ok", "service": "podimo-rss"})
 
 @app.route("/", methods=["POST", "GET"])
 async def index():

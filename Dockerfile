@@ -38,6 +38,6 @@ ENV PATH=/home/podimo/.local/bin:$PATH \
 EXPOSE 12104
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:12104/ || exit 1
+    CMD curl -fsS http://127.0.0.1:12104/health || exit 1
 
 ENTRYPOINT ["python3", "main.py"]

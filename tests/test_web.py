@@ -7,6 +7,16 @@ class TestWebRoutes:
     """Test Quart web endpoints."""
 
     @pytest.mark.asyncio
+    async def test_health_endpoint(self):
+        """/health should return 200 JSON with status=ok."""
+        async with app.test_client() as client:
+            response = await client.get('/health')
+            assert response.status_code == 200
+            body = await response.get_data()
+            assert b'"status"' in body
+            assert b'"ok"' in body
+
+    @pytest.mark.asyncio
     async def test_index_get(self):
         """The root route should return 200 with the form."""
         async with app.test_client() as client:
