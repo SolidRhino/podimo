@@ -66,11 +66,22 @@ A full list of options is in [.env.example](.env.example).
 
 ## Docker
 
-Pull the latest image from GitHub Container Registry:
+The fastest way to run this tool. No Python or dependencies needed.
+
+### Quick start (Docker CLI)
 
 ```sh
-docker run --rm \
-    -e PODIMO_BIND_HOST=0.0.0.0:12104 \
+# 1. Copy the Docker-specific environment file
+cp .env.docker .env
+
+# 2. Edit .env with your Podimo credentials
+nano .env
+
+# 3. Run the container
+docker run -d \
+    --name podimo-rss \
+    --restart unless-stopped \
+    --env-file .env \
     -p 12104:12104 \
     -v $(pwd)/cache:/src/cache \
     ghcr.io/solidrhino/podimo:latest
@@ -78,7 +89,47 @@ docker run --rm \
 
 Visit [http://localhost:12104](http://localhost:12104) once running.
 
-See [.env.example](.env.example) for all available environment variables.
+### Docker Compose (recommended for persistence)
+
+```sh
+# 1. Copy the Docker-specific environment file
+cp .env.docker .env
+
+# 2. Edit .env with your Podimo credentials
+nano .env
+
+# 3. Start the stack
+docker compose up -d
+```
+
+The `docker-compose.yml` includes:
+- Persistent cache volume (`podimo-cache`)
+- Health checks via the `/health` endpoint
+- Auto-restart on failure
+
+### Updating the container
+
+```sh
+docker pull ghcr.io/solidrhino/podimo:latest
+docker stop podimo-rss && docker rm podimo-rss
+# Re-run the docker run command above
+```
+
+Or with Docker Compose:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+### Environment files
+
+| File | Use when | Why |
+|------|----------|-----|
+| `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/src/cache` volume path, `LOCAL_CREDENTIALS=true` |
+| `.env.example` | Local Python install | Generic template — uncomment the lines you need |
+
+See [.env.docker](.env.docker) for Docker-specific defaults, or [.env.example](.env.example) for the full option reference.
 
 ---
 
