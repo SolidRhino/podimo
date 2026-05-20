@@ -25,6 +25,7 @@ import time
 from os import getenv
 from functools import wraps
 from typing import Optional, Dict, Any, Tuple, List, Iterator, Callable, Awaitable
+from lxml import etree
 from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, AuthenticationError
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
@@ -449,12 +450,19 @@ async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: Clie
         fe.title(episode["title"])
 
     fe.pubDate(episode.get("publishDatetime", episode.get("datetime")))
-    try:
-        fe.podcast.itunes_image(episode["imageUrl"])
-    except ValueError:
-        # Podimo serves .webp or extensionless CDN URLs that feedgen rejects.
-        # Skip the episode-level iTunes image rather than crashing the whole feed.
-        logging.debug(f"Skipping itunes_image for episode {episode['id']}: unsupported format")
+    # feedgen's itunes_image() rejects .webp/extensionless URLs even though
+    # podcast clients handle them fine. Bypass: write the element directly.
+    image_url = episode.get("imageUrl")
+    if image_url:
+        try:
+            fe.podcast.itunes_image(image_url)
+        except ValueError:
+            # Podimo serves .webp or extensionless CDN URLs that feedgen rejects.
+            # Manually inject the element so podcast clients still get artwork.
+            itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+            img = etree.SubElement(fe.lxml(), "{%s}image" % itunes_ns)
+            img.set("href", str(image_url))
+            logging.debug(f"Bypassed itunes_image validation for {episode['id']}")
 
     logging.debug(f"Found podcast '{episode['title']}'")
     fe.podcast.itunes_duration(duration)
@@ -490,7 +498,15 @@ async def podcastsToRss(podcast_id: str, data: Dict[str, Any], locale: str) -> b
     image = images.get("coverImageUrl") if images else None
     if image is None and len(episodes) > 0:
         image = episodes[0].get("imageUrl")
-    fg.image(image)
+    try:
+        fg.image(image)
+    except ValueError:
+        # feedgen rejects .webp/extensionless URLs. Bypass for channel image.
+        if image:
+            itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+            img = etree.SubElement(fg.lxml().find("channel"), "{%s}image" % itunes_ns)
+            img.set("href", str(image))
+            logging.debug(f"Bypassed channel image validation for podcast")
 
     language = podcast.get("language")
     if language is None:
