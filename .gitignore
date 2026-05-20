@@ -1,5 +1,55 @@
-__pycache__
-venv
-cache
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files (contain secrets)
 .env
+.env.local
+.env.*.local
+
+# pytest
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Caches
+cache/
+*.cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Block list (local overrides)
 .block-list
+
+# Docker / local volumes
+podimo-cache/
