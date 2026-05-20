@@ -14,8 +14,8 @@ FROM python:3.12-alpine AS runtime
 
 WORKDIR /src
 
-# Install curl for HEALTHCHECK probes (python:3.12-alpine does not include wget)
-RUN apk add --no-cache curl
+# Install curl for HEALTHCHECK and libxml2/libxslt for lxml runtime
+RUN apk add --no-cache curl libxml2 libxslt
 
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/podimo/.local
@@ -32,7 +32,7 @@ USER podimo
 
 # Ensure python can find user-installed packages
 ENV PATH=/home/podimo/.local/bin:$PATH \
-    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages:$PYTHONPATH \
+    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages \
     PYTHONUNBUFFERED=1
 
 EXPOSE 12104
