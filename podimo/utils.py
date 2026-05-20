@@ -46,7 +46,16 @@ def token_key(username: str, password: str) -> str:
 
 # Verify if it is actually an email address
 def is_correct_email_address(username: str) -> bool:
-    return "@" in parseaddr(username)[1]
+    """Check if the username looks like a valid email address.
+
+    Uses email.utils.parseaddr to extract the email component, then
+    validates that both local and domain parts are non-empty.
+    """
+    email = parseaddr(username)[1]
+    if "@" not in email:
+        return False
+    local, _, domain = email.partition("@")
+    return bool(local.strip()) and bool(domain.strip())
 
 
 def generateHeaders(authorization: Optional[str], locale: str) -> Dict[str, str]:

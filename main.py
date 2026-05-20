@@ -336,12 +336,12 @@ def extract_audio_url(episode: Dict[str, Any]) -> Tuple[Optional[str], int]:
 
 
 async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: ClientSession, locale: str) -> None:
-    fe = fg.add_entry()
-    fe.guid(episode["id"])
-
     url, duration = extract_audio_url(episode)
     if url is None:
         return
+
+    fe = fg.add_entry()
+    fe.guid(episode["id"])
 
     # Generate the video url and paste it as prefix in the description :')
     ep_id = url.split("/")[-1].replace(".mp3", "")

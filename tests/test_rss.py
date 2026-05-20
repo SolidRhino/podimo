@@ -3,6 +3,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from main import extract_audio_url, podcastsToRss, addFeedEntry, urlHeadInfo
 
 
+def _make_head_response_mock(headers):
+    """Create a mock response object for session.head()."""
+    response = MagicMock()
+    response.headers = headers
+    return response
+
+
+def _make_session_mock(response_headers):
+    """Create a mock aiohttp ClientSession that supports async with."""
+    response = _make_head_response_mock(response_headers)
+    head_cm = AsyncMock()
+    head_cm.__aenter__ = AsyncMock(return_value=response)
+    head_cm.__aexit__ = AsyncMock(return_value=False)
+
+    session = MagicMock()
+    session.head.return_value = head_cm
+    return session
+
+
 class TestExtractAudioUrl:
     """Test audio URL extraction from episode data."""
 
@@ -60,7 +79,7 @@ class TestUrlHeadInfo:
         """Should return cached value immediately."""
         import podimo.cache as cache
         cache.insertIntoHeadCache("test-id", "1024", "audio/mpeg")
-        
+
         mock_session = MagicMock()
         result = await urlHeadInfo(mock_session, "test-id", "https://example.com/audio.mp3", "nl-NL")
         assert result == ("1024", "audio/mpeg")
@@ -74,16 +93,12 @@ class TestUrlHeadInfo:
         import podimo.cache as cache
         if "test-head-id" in cache.head_cache:
             del cache.head_cache["test-head-id"]
-        
-        mock_response = AsyncMock()
-        mock_response.headers = {'content-length': '2048'}
-        
-        mock_session = AsyncMock()
-        mock_session.head.return_value.__aenter__.return_value = mock_response
-        
+
+        mock_session = _make_session_mock({'content-length': '2048'})
+
         result = await urlHeadInfo(mock_session, "test-head-id", "https://example.com/audio.mp3", "nl-NL")
         assert result == ("2048", "audio/mpeg")
-        
+
         # Verify it was cached
         cached = cache.getHeadEntry("test-head-id")
         assert cached == ("2048", "audio/mpeg")
@@ -94,13 +109,9 @@ class TestUrlHeadInfo:
         import podimo.cache as cache
         if "test-head-id2" in cache.head_cache:
             del cache.head_cache["test-head-id2"]
-        
-        mock_response = AsyncMock()
-        mock_response.headers = {'content-length': '4096', 'content-type': 'audio/x-m4a'}
-        
-        mock_session = AsyncMock()
-        mock_session.head.return_value.__aenter__.return_value = mock_response
-        
+
+        mock_session = _make_session_mock({'content-length': '4096', 'content-type': 'audio/x-m4a'})
+
         # URL without extension so guess_type returns None
         result = await urlHeadInfo(mock_session, "test-head-id2", "https://example.com/audio-noext", "nl-NL")
         assert result == ("4096", "audio/x-m4a")
@@ -112,21 +123,18 @@ class TestAddFeedEntry:
     @pytest.mark.asyncio
     async def test_basic_entry(self, mock_podcast_data, monkeypatch):
         """Should add a basic feed entry without video."""
-        import podimo.config as cfg
-        monkeypatch.setattr(cfg, "VIDEO_ENABLED", False)
-        
+        import main
+        monkeypatch.setattr(main, "VIDEO_ENABLED", False)
+
         from feedgen.feed import FeedGenerator
         fg = FeedGenerator()
         fg.load_extension("podcast")
-        
-        mock_session = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.headers = {'content-length': '1024'}
-        mock_session.head.return_value.__aenter__.return_value = mock_response
-        
+
+        mock_session = _make_session_mock({'content-length': '1024'})
+
         episode = mock_podcast_data["episodes"][0]
         await addFeedEntry(fg, episode, mock_session, "nl-NL")
-        
+
         entries = fg.entry()
         assert len(entries) == 1
         assert entries[0].title() == "Episode 1"
@@ -135,25 +143,22 @@ class TestAddFeedEntry:
     @pytest.mark.asyncio
     async def test_entry_with_video_check(self, mock_podcast_data, monkeypatch):
         """Should append video URL to description when video exists."""
-        import podimo.config as cfg
-        monkeypatch.setattr(cfg, "VIDEO_ENABLED", True)
-        monkeypatch.setattr(cfg, "VIDEO_CHECK_ENABLED", True)
-        monkeypatch.setattr(cfg, "VIDEO_TITLE_SUFFIX", " [VIDEO]")
-        
+        import main
+        monkeypatch.setattr(main, "VIDEO_ENABLED", True)
+        monkeypatch.setattr(main, "VIDEO_CHECK_ENABLED", True)
+        monkeypatch.setattr(main, "VIDEO_TITLE_SUFFIX", " [VIDEO]")
+
         from feedgen.feed import FeedGenerator
         fg = FeedGenerator()
         fg.load_extension("podcast")
-        
-        mock_session = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.headers = {'content-length': '1024'}
-        mock_session.head.return_value.__aenter__.return_value = mock_response
-        
+
+        mock_session = _make_session_mock({'content-length': '1024'})
+
         episode = mock_podcast_data["episodes"][0]
         # Mock video_exists_at_url to return True
-        with patch('main.video_exists_at_url', return_value=True):
+        with patch.object(main, 'video_exists_at_url', new=AsyncMock(return_value=True)):
             await addFeedEntry(fg, episode, mock_session, "nl-NL")
-        
+
         entries = fg.entry()
         assert "Video URL found at:" in entries[0].description()
         assert entries[0].title() == "Episode 1 [VIDEO]"
@@ -164,8 +169,8 @@ class TestAddFeedEntry:
         from feedgen.feed import FeedGenerator
         fg = FeedGenerator()
         fg.load_extension("podcast")
-        
-        mock_session = AsyncMock()
+
+        mock_session = MagicMock()
         episode = {
             "id": "ep-no-audio",
             "title": "No Audio",
@@ -173,7 +178,7 @@ class TestAddFeedEntry:
             "audio": None,
             "streamMedia": None
         }
-        
+
         await addFeedEntry(fg, episode, mock_session, "nl-NL")
         assert len(fg.entry()) == 0
 
@@ -189,7 +194,7 @@ class TestPodcastsToRss:
         assert b"Test Author" in feed
         assert b"Episode 1" in feed
         assert b"https://cdn.podimo.com/audio/ep-001.mp3" in feed
-        assert b"&lt;itunes:block&gt;Yes&lt;/itunes:block&gt;" in feed or b"itunes_block" in feed
+        assert b"<itunes:block>yes</itunes:block>" in feed or b"itunes_block" in feed
 
     @pytest.mark.asyncio
     async def test_feed_without_episodes(self, mock_podcast_no_episodes):
@@ -203,8 +208,8 @@ class TestPodcastsToRss:
 
     @pytest.mark.asyncio
     async def test_public_feeds_no_block(self, mock_podcast_data, monkeypatch):
-        import podimo.config as cfg
-        monkeypatch.setattr(cfg, "PUBLIC_FEEDS", True)
+        import main
+        monkeypatch.setattr(main, "PUBLIC_FEEDS", True)
         feed = await podcastsToRss("12345-1234-1234-1234-123456789abc", mock_podcast_data, "en-US")
         # Should NOT contain itunes_block when public
         assert b"itunes_block" not in feed.lower()
