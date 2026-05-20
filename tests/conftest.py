@@ -1,6 +1,12 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """Reset the rate limiter state between tests."""
+    import main
+    main.proactive.clear()
+
 @pytest.fixture
 def mock_podcast_data():
     """Sample GraphQL podcast response with episodes."""

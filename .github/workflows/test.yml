@@ -12,6 +12,11 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    env:
+      # Ensure imports like 'import main' and 'import podimo.client' work
+      PYTHONPATH: ${{ github.workspace }}
+      # Don't leak credentials from any .env that might exist
+      PODIMO_BIND_HOST: "127.0.0.1:12104"
 
     steps:
       - name: Checkout
@@ -28,10 +33,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run type checker
-        run: mypy podimo/ main.py
+        run: python -m mypy podimo/ main.py
 
       - name: Run tests with coverage
-        run: pytest --cov=podimo --cov=main --cov-report=xml --cov-report=term tests/
+        run: python -m pytest --cov=podimo --cov=main --cov-report=xml --cov-report=term tests/
+        env:
+          PYTHONPATH: ${{ github.workspace }}
 
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.10'

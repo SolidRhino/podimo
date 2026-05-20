@@ -2,9 +2,15 @@ name: Publish Docker image
 
 on:
   workflow_dispatch:
+  # Only publish Docker image when tests pass on main
+  workflow_run:
+    workflows: ["Tests"]
+    types:
+      - completed
+    branches: [main, master]
+  # Always publish on version tags
   push:
-    branches: [ "main" ]
-    tags: [ 'v*.*.*' ]
+    tags: ['v*.*.*']
 
 env:
   REGISTRY: ghcr.io
@@ -12,6 +18,11 @@ env:
 
 jobs:
   build:
+    # Only run if the test workflow succeeded (or this is a tag push)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
