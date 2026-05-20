@@ -14,7 +14,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -41,6 +40,11 @@ jobs:
         with:
           platforms: linux/amd64, linux/arm64, linux/arm/v7, linux/arm/v6
 
+      # Derive lowercase image name since GHCR doesn't allow uppercase
+      - name: Set image name
+        id: image_name
+        run: echo "IMAGE_NAME=${{ env.REGISTRY }}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Log into registry ${{ env.REGISTRY }}
         if: github.event_name != 'pull_request'
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d
@@ -53,7 +57,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner | lower }}/${{ github.event.repository.name | lower }}
+          images: ${{ steps.image_name.outputs.IMAGE_NAME }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09
@@ -61,7 +65,7 @@ jobs:
           context: .
           platforms: linux/amd64, linux/arm64, linux/arm/v7, linux/arm/v6
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}, ghcr.io/${{ github.repository_owner | lower }}/${{ github.event.repository.name | lower }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
