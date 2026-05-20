@@ -1,5 +1,5 @@
 # Stage 1: Build dependencies
-FROM python:3.10-alpine AS builder
+FROM python:3.12-alpine AS builder
 
 WORKDIR /src
 
@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Stage 2: Runtime image
-FROM python:3.10-alpine AS runtime
+FROM python:3.12-alpine AS runtime
 
 WORKDIR /src
 
@@ -29,9 +29,12 @@ USER podimo
 
 # Ensure python can find user-installed packages
 ENV PATH=/home/podimo/.local/bin:$PATH \
-    PYTHONPATH=/home/podimo/.local/lib/python3.10/site-packages:$PYTHONPATH \
+    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages:$PYTHONPATH \
     PYTHONUNBUFFERED=1
 
 EXPOSE 12104
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:12104/ || exit 1
 
 ENTRYPOINT ["python3", "main.py"]
