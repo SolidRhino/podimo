@@ -86,7 +86,9 @@ class PodimoClient:
         if response is None:
             raise RuntimeError(f"Could not receive response for query: {query.strip()[:30]}...")
         if response.status_code != 200:
-            raise RuntimeError(f"Podimo returned an error code. Response code was: {response.status_code} for query \"{query.strip()[:30]}...\"")
+            body = getattr(response, 'text', '')[:500]
+            logging.debug(f"Podimo non-200 response body: {body}")
+            raise RuntimeError(f"Podimo returned an error code. Response code was: {response.status_code} for query \"{query.strip()[:30]}...\" Body: {body[:200]}")
         result: Dict[str, Any] = response.json()["data"]
         if result is None:
             raise RuntimeError(f"Podimo returned no valid data for query {query.strip()[:30]}")

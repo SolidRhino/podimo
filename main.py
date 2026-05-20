@@ -191,7 +191,10 @@ async def search_podcasts():
             return jsonify({"results": results, "query": search_query})
         except PodimoError as e:
             logging.error(f"Podimo search error: {e}")
-            return Response("Search failed", 500)
+            return Response("Search failed — Podimo API error. Try searching from open.podimo.com directly.", 500)
+        except Exception as e:
+            logging.error(f"Unexpected search error: {e}")
+            return Response("Search failed. Podimo may have changed their API.", 500)
 
 
 @app.route("/subscriptions")
@@ -446,7 +449,12 @@ async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: Clie
         fe.title(episode["title"])
 
     fe.pubDate(episode.get("publishDatetime", episode.get("datetime")))
-    fe.podcast.itunes_image(episode["imageUrl"])
+    try:
+        fe.podcast.itunes_image(episode["imageUrl"])
+    except ValueError:
+        # Podimo serves .webp or extensionless CDN URLs that feedgen rejects.
+        # Skip the episode-level iTunes image rather than crashing the whole feed.
+        logging.debug(f"Skipping itunes_image for episode {episode['id']}: unsupported format")
 
     logging.debug(f"Found podcast '{episode['title']}'")
     fe.podcast.itunes_duration(duration)
