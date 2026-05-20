@@ -5,13 +5,14 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.10", "3.11", "3.12"]
     env:
       # Ensure imports like 'import main' and 'import podimo.client' work
       PYTHONPATH: ${{ github.workspace }}
