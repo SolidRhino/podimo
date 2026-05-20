@@ -6,26 +6,122 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 
 VENV=venv/bin/activate
+PYTHON := python3
+REQUIRED_MAJOR := 3
+REQUIRED_MINOR := 10
 
 help:
 	@echo "The following options are available:"
-	echo -e "\$$ make update"
-	echo -e "\tUpdate the tool to the latest release\n"
-	echo -e "\$$ make config"
-	echo -e "\tEdit configuration options for the tool\n"
-	echo -e "\$$ make start"
-	echo -e "\$$ make restart"
-	echo -e "\$$ make stop"
-	echo -e "\tChange the state of the tool, assuming it has been\n\tinstalled as a service\n"
-	echo -e "\$$ make install"
-	echo -e "\$$ make uninstall"
-	echo -e "\t(Un)install the tool as a service\n"
-	echo -e "\$$ make status"
-	echo -e "\$$ make logs"
-	echo -e "\tView the current status and/or logs\n"
-	echo -e "\$$ make help"
-	echo -e "\tDisplay this help menu"
+	@echo ""
+	@echo "$$ make test"
+	@echo "\tRun the pytest test suite (requires venv)"
+	@echo "$$ make lint"
+	@echo "\tRun mypy type checker (requires venv)"
+	@echo "$$ make clean"
+	@echo "\tRemove cache, build artifacts, and venv"
+	@echo ""
+	@echo "$$ make docker-build"
+	@echo "\tBuild the Docker image"
+	@echo "$$ make docker-run"
+	@echo "\tRun the Docker container (detached)"
+	@echo "$$ make docker-stop"
+	@echo "\tStop the running Docker container"
+	@echo ""
+	@echo "$$ make config"
+	@echo "\tEdit configuration options for the tool"
+	@echo "$$ make update"
+	@echo "\tUpdate the tool to the latest release"
+	@echo ""
+	@echo "$$ make install"
+	@echo "\tInstall the tool as a systemd service (venv + systemd)"
+	@echo "$$ make start"
+	@echo "$$ make restart"
+	@echo "$$ make stop"
+	@echo "\tChange the state of the systemd service"
+	@echo "$$ make status"
+	@echo "$$ make logs"
+	@echo "\tView status and/or logs of the systemd service"
+	@echo ""
+	@echo "$$ make help"
+	@echo "\tDisplay this help menu"
 .PHONY: help
+
+# --- Development targets ---
+
+VENV:
+	@# Check Python version
+	@python_version="$$($(PYTHON) --version 2>&1 | awk '{print \$$2}')"
+	@major="$$(echo $$python_version | cut -d. -f1)"
+	@minor="$$(echo $$python_version | cut -d. -f2)"
+	@if [[ "$$major" -lt "$(REQUIRED_MAJOR)" ]] || [[ "$$major" -eq "$(REQUIRED_MAJOR)" && "$$minor" -lt "$(REQUIRED_MINOR)" ]]; then
+		@echo "Error: Python $(REQUIRED_MAJOR).$(REQUIRED_MINOR)+ required, but found $$python_version"
+		@echo "Install Python $(REQUIRED_MINOR)+ and set PYTHON=path/to/python3 before running make."
+		@exit 1
+	@fi
+	$(PYTHON) -m venv venv --prompt podimo
+
+install-venv: VENV
+	source venv/bin/activate
+	pip install --upgrade pip
+	pip install -r requirements.txt
+.PHONY: install-venv
+
+test: VENV
+	@source venv/bin/activate
+	python -m pytest tests/ -v
+.PHONY: test
+
+lint: VENV
+	@source venv/bin/activate
+	python -m mypy podimo/ main.py
+.PHONY: lint
+
+format:
+	@echo "Format checking with ruff/black not configured. Add if needed."
+	@source venv/bin/activate && python -m black --check podimo/ main.py tests/ 2>/dev/null || echo "Install black to enable: pip install black"
+.PHONY: format
+
+clean:
+	rm -rf venv/ __pycache__/ .pytest_cache/ .mypy_cache/ .coverage htmlcov/ *.egg-info dist/ build/
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name '*.pyc' -delete 2>/dev/null || true
+	find . -type d -name '*.egg-info' -exec rm -rf {} + 2>/dev/null || true
+	@echo "Cleaned up development artifacts"
+.PHONY: clean
+
+# --- Docker targets ---
+
+DOCKER_IMAGE := podimo-rss
+DOCKER_CONTAINER := podimo-rss
+
+docker-build:
+	docker build -t $(DOCKER_IMAGE):latest .
+.PHONY: docker-build
+
+docker-run: docker-build
+	@# Check if container already exists and remove it
+	docker rm -f $(DOCKER_CONTAINER) 2>/dev/null || true
+	docker run -d \
+		--name $(DOCKER_CONTAINER) \
+		--restart unless-stopped \
+		-e PODIMO_BIND_HOST=0.0.0.0:12104 \
+		-p 12104:12104 \
+		-v $(PWD)/cache:/src/cache \
+		$(DOCKER_IMAGE):latest
+	@echo "Container '$(DOCKER_CONTAINER)' started on http://localhost:12104"
+	@echo "View logs: docker logs -f $(DOCKER_CONTAINER)"
+.PHONY: docker-run
+
+docker-stop:
+	@docker stop $(DOCKER_CONTAINER) 2>/dev/null || echo "Container '$(DOCKER_CONTAINER)' not running"
+	@docker rm -f $(DOCKER_CONTAINER) 2>/dev/null || true
+.PHONY: docker-stop
+
+docker-logs:
+	@docker logs -f $(DOCKER_CONTAINER) 2>/dev/null || echo "Container '$(DOCKER_CONTAINER)' not running"
+.PHONY: docker-logs
+
+# --- Legacy systemd targets ---
 
 update: VENV
 	@export CURRENT_GIT_TAG="$$(git describe --abbrev=0 --tags)"
@@ -93,7 +189,7 @@ logs:
 	sudo journalctl -f --since today -u podimo.service
 .PHONY: logs
 
-install:
+install: VENV
 	@cat > .podimo.service <<EOL
 	# This is managed by $$(pwd)/Makefile
 	[Unit]
@@ -124,6 +220,3 @@ uninstall: stop
 	sudo rm -rf /etc/systemd/system/podimo.service
 	sudo systemctl daemon-reload
 .PHONY: uninstall
-
-VENV:
-	python -m venv venv --prompt podimo
