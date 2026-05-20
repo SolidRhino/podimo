@@ -18,7 +18,7 @@
 # permissions and limitations under the Licence.
 
 from podimo.config import *
-from typing import Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 from time import time
 from diskcache import Cache
 from os.path import join
@@ -43,8 +43,6 @@ podcast_cache = Cache(join(CACHE_DIR, 'podcast_cache'))
 # the file size of the episode. The file size of an episode doesn't change often,
 # which makes it perfect for caching.
 head_cache = Cache(join(CACHE_DIR, 'head_cache'))
-
-from typing import Any, Optional, Tuple
 
 def getCacheEntry(key: str, cache: Any, delete: bool = True) -> Optional[Any]:
     if key in cache:
