@@ -270,10 +270,10 @@ class PodimoClient:
         """
         await self.podimoLogin(scraper)
         headers = self.generateHeaders(self.token)
-        logging.debug(f"Podcast search query='{query}' locale={self.locale}")
+        logging.debug(f"Podcast search query='{query}'")
 
         # Try multiple query variants in order of likelihood
-        from typing import TypedDict, cast
+        from typing import TypedDict
 
         class SearchVariant(TypedDict):
             query: str
@@ -281,11 +281,11 @@ class PodimoClient:
             result_key: str
 
         variants: List[SearchVariant] = [
-            # Variant 1: current schema (may have changed fields)
+            # Variant 1: original schema (as it was before any changes)
             {
                 "query": """
-                    query PodcastsAutocomplete($search: String!, $locale: String) {
-                        podcastsAutocomplete(search: $search, locale: $locale) {
+                    query PodcastsAutocomplete($search: String!) {
+                        podcastsAutocomplete(search: $search) {
                             id
                             title
                             coverImageUrl
@@ -294,49 +294,35 @@ class PodimoClient:
                         }
                     }
                 """,
-                "variables": {"search": query, "locale": self.locale},
+                "variables": {"search": query},
                 "result_key": "podcastsAutocomplete",
             },
-            # Variant 2: minimal fields (if coverImageUrl/authorName were removed)
+            # Variant 2: minimal fields (if coverImageUrl/authorName/description were removed)
             {
                 "query": """
-                    query PodcastsAutocomplete($search: String!, $locale: String) {
-                        podcastsAutocomplete(search: $search, locale: $locale) {
+                    query PodcastsAutocomplete($search: String!) {
+                        podcastsAutocomplete(search: $search) {
                             id
                             title
                         }
                     }
                 """,
-                "variables": {"search": query, "locale": self.locale},
+                "variables": {"search": query},
                 "result_key": "podcastsAutocomplete",
             },
             # Variant 3: alternative endpoint name
             {
                 "query": """
-                    query SearchPodcasts($search: String!, $locale: String) {
-                        searchPodcasts(search: $search, locale: $locale) {
+                    query SearchPodcasts($search: String!) {
+                        searchPodcasts(search: $search) {
                             id
                             title
                             coverImageUrl
                         }
                     }
                 """,
-                "variables": {"search": query, "locale": self.locale},
+                "variables": {"search": query},
                 "result_key": "searchPodcasts",
-            },
-            # Variant 4: yet another possible name
-            {
-                "query": """
-                    query PodcastSearch($query: String!, $locale: String) {
-                        podcastSearch(query: $query, locale: $locale) {
-                            id
-                            title
-                            coverImageUrl
-                        }
-                    }
-                """,
-                "variables": {"query": query, "locale": self.locale},
-                "result_key": "podcastSearch",
             },
         ]
 
