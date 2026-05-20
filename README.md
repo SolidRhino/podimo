@@ -14,23 +14,39 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 ## Table of Contents
 
+- [What's New](#whats-new)
 - [Installation](#installation)
 - [Docker](#docker)
 - [Finding your Podcast ID](#finding-your-podcast-id)
 - [Configuration](#configuration)
 - [Bot Detection](#bot-detection)
 - [Privacy](#privacy)
+- [Development](#development)
 - [License](#license)
 - [Support](#support)
 
 ---
 
+## What's New
+
+🔍 **Search by name** — No need to hunt for UUIDs on Podimo's website. Type a podcast name and pick from results.
+
+📻 **Your subscriptions** — After logging in, view all podcasts you follow and generate feeds with one click.
+
+🩺 **Health endpoint** — A lightweight `/health` probe for Docker and Kubernetes orchestration.
+
+🐍 **Python 3.12** — Updated runtime with modern dependencies and security patches.
+
+🧪 **CI/CD** — GitHub Actions run tests on Python 3.10/3.11/3.12 and publish Docker images automatically.
+
+---
+
 ## Installation
 
-> Requires Python 3.8+
+> Requires Python 3.10+
 
 ```sh
-git clone https://github.com/izu-x/podimo
+git clone https://github.com/SolidRhino/podimo
 cd podimo
 make update
 make install
@@ -51,12 +67,14 @@ A full list of options is in [.env.example](.env.example).
 
 ## Docker
 
+Pull the latest image from GitHub Container Registry:
+
 ```sh
 docker run --rm \
     -e PODIMO_BIND_HOST=0.0.0.0:12104 \
     -p 12104:12104 \
     -v $(pwd)/cache:/src/cache \
-    ghcr.io/thijsray/podimo:latest
+    ghcr.io/solidrhino/podimo:latest
 ```
 
 Visit [http://localhost:12104](http://localhost:12104) once running.
@@ -67,7 +85,17 @@ See [.env.example](.env.example) for all available environment variables.
 
 ## Finding your Podcast ID
 
-Each Podimo podcast has a unique UUID used to generate the RSS feed. The easiest way to find it:
+There are three ways to get a podcast's ID:
+
+### 1. Search by name (Easiest)
+
+Use the **Search** field on the homepage. Type the podcast name, hit **Search**, and click a result. The ID is auto-filled for you.
+
+### 2. From your subscriptions
+
+Log in with your Podimo credentials and visit the **Subscriptions** view to see all podcasts you follow.
+
+### 3. Manual extraction from URL
 
 1. Go to [open.podimo.com](https://open.podimo.com)
 2. Search for and open the podcast page
@@ -79,13 +107,36 @@ https://open.podimo.com/podcast/09c55c96-9b1b-456e-bdf2-3abed3b61db5
                                  your Podcast ID
 ```
 
-Use that ID when generating your feed URL in the interface.
+Paste that ID into the **Podcast ID or URL** field on the homepage.
+
+---
+
+## API Endpoints
+
+| Endpoint | Description | Auth |
+|----------|-------------|------|
+| `GET /` | Web interface (form + search) | — |
+| `GET /health` | JSON health probe for Docker/K8s | — |
+| `GET /search?q=...` | Search podcasts by name | Basic Auth or `LOCAL_CREDENTIALS` |
+| `GET /subscriptions` | List followed podcasts | Basic Auth or `LOCAL_CREDENTIALS` |
+| `GET /feed/<id>.xml` | RSS feed (credentials in URL) | Basic Auth |
+| `GET /feed/<user>/<pass>/<id>.xml` | RSS feed (credentials in path) | — |
 
 ---
 
 ## Configuration
 
 All configuration is done via environment variables or the `.env` file. Run `make config` to edit it interactively.
+
+Key settings:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PODIMO_BIND_HOST` | `127.0.0.1:12104` | Where the server listens |
+| `LOCAL_CREDENTIALS` | `false` | Store credentials server-side (recommended for personal use) |
+| `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials when `LOCAL_CREDENTIALS=true` |
+| `ZENROWS_API` / `SCRAPER_API` | — | Anti-bot proxy keys |
+| `PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
 
 Full reference: [.env.example](.env.example)
 
@@ -116,6 +167,41 @@ The tool handles credentials as follows:
 - **The Podimo access token** is cached in memory (or on disk if `STORE_TOKENS_ON_DISK=true`)
 
 Nothing is ever logged.
+
+---
+
+## Development
+
+### Running tests
+
+```sh
+pip install -r requirements.txt
+pytest -v
+mypy podimo/ main.py
+```
+
+### Local CI with `act`
+
+You can test GitHub Actions workflows locally using [`nektos/act`](https://nektosact.com/):
+
+```sh
+brew install act
+act --dryrun
+act -j test -W .github/workflows/test.yml
+```
+
+> **Note:** On macOS with Colima, `act` may fail to mount the Docker socket. If so, run CI directly on GitHub by opening a PR.
+
+### Project structure
+
+```
+podimo/
+  client.py    → GraphQL client (auth, search, episodes)
+  config.py    → Environment variables & constants
+  cache.py     → diskcache-backed caches
+  utils.py     → Header generation, helpers
+tests/         → pytest + pytest-asyncio (77 tests)
+```
 
 ---
 
