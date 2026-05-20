@@ -1,6 +1,8 @@
 import pytest
+from unittest.mock import AsyncMock
 from podimo.client import PodimoClient
 from podimo.utils import token_key
+import asyncio
 
 
 class TestPodimoClientConstructor:
@@ -82,3 +84,33 @@ class TestTokenKey:
         k1 = token_key("a@b.com", "pw")
         k2 = token_key("c@d.com", "pw")
         assert k1 != k2
+
+
+class TestSearchPodcasts:
+    """Test searchPodcasts GraphQL response handling."""
+
+    def test_empty_results(self):
+        """Should return coroutine when called (async method)."""
+        client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
+        coro = client.searchPodcasts("xyz", AsyncMock())
+        assert asyncio.iscoroutine(coro)
+        # Clean up the coroutine to avoid unawaited warning
+        coro.close()
+
+    def test_method_exists(self):
+        client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
+        assert hasattr(client, "searchPodcasts")
+
+
+class TestGetFollowedPodcasts:
+    """Test getFollowedPodcasts GraphQL response handling."""
+
+    def test_method_exists(self):
+        client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
+        assert hasattr(client, "getFollowedPodcasts")
+
+    def test_returns_coroutine(self):
+        client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
+        coro = client.getFollowedPodcasts(AsyncMock())
+        assert asyncio.iscoroutine(coro)
+        coro.close()

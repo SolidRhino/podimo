@@ -156,6 +156,78 @@ async def health():
     """
     return jsonify({"status": "ok", "service": "podimo-rss"})
 
+@app.route("/search")
+@limit_request()
+async def search_podcasts():
+    """Search for podcasts by name using Podimo's autocomplete endpoint."""
+    search_query = request.args.get("q", "").strip()
+    if not search_query or len(search_query) < 2:
+        return Response("Query must be at least 2 characters", 400)
+
+    if LOCAL_CREDENTIALS:
+        username = PODIMO_EMAIL
+        password = PODIMO_PASSWORD
+        region = request.args.get("region", "nl")
+        locale = request.args.get("locale", "nl-NL")
+    else:
+        auth = request.authorization
+        if not auth:
+            return authenticate()
+        username, region, locale = split_username_region_locale(auth.username)
+        password = auth.password
+
+    if region not in [rc for (rc, _) in REGIONS]:
+        return Response("Invalid region", 400)
+    if locale not in LOCALES:
+        return Response("Invalid locale", 400)
+
+    with cloudscraper.create_scraper() as scraper:
+        scraper.proxies = proxies
+        client = await check_auth(username, password, region, locale, scraper)
+        if not client:
+            return authenticate()
+        try:
+            results = await client.searchPodcasts(search_query, scraper)
+            return jsonify({"results": results, "query": search_query})
+        except PodimoError as e:
+            logging.error(f"Podimo search error: {e}")
+            return Response("Search failed", 500)
+
+
+@app.route("/subscriptions")
+@limit_request()
+async def subscriptions():
+    """List podcasts the authenticated user follows."""
+    if LOCAL_CREDENTIALS:
+        username = PODIMO_EMAIL
+        password = PODIMO_PASSWORD
+        region = request.args.get("region", "nl")
+        locale = request.args.get("locale", "nl-NL")
+    else:
+        auth = request.authorization
+        if not auth:
+            return authenticate()
+        username, region, locale = split_username_region_locale(auth.username)
+        password = auth.password
+
+    if region not in [rc for (rc, _) in REGIONS]:
+        return Response("Invalid region", 400)
+    if locale not in LOCALES:
+        return Response("Invalid locale", 400)
+
+    with cloudscraper.create_scraper() as scraper:
+        scraper.proxies = proxies
+        client = await check_auth(username, password, region, locale, scraper)
+        if not client:
+            return authenticate()
+        try:
+            results = await client.getFollowedPodcasts(scraper)
+            return jsonify({"results": results})
+        except PodimoError as e:
+            logging.error(f"Podimo subscriptions error: {e}")
+            return Response("Failed to fetch subscriptions", 500)
+
+
 @app.route("/", methods=["POST", "GET"])
 async def index():
     error = ""

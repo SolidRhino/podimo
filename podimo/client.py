@@ -24,7 +24,7 @@ from podimo.utils import (is_correct_email_address, token_key,
 from podimo.cache import insertIntoPodcastCache, getCacheEntry, podcast_cache
 from time import time
 import logging
-from typing import Optional, Dict, Any, cast
+from typing import Optional, Dict, Any, List, cast
 
 class PodimoError(Exception):
     """Base exception for Podimo API errors."""
@@ -259,6 +259,56 @@ class PodimoClient:
             return fullResult
         else:
             raise PodcastNotFoundError(f"Podcast {podcast_id} not found or empty response")
+
+    async def searchPodcasts(self, query: str, scraper: Any) -> List[Dict[str, Any]]:
+        """Search podcasts by name via Podimo's autocomplete endpoint.
+
+        Returns a list of podcast entries with id, title, and coverImageUrl.
+        """
+        await self.podimoLogin(scraper)
+        headers = self.generateHeaders(self.token)
+        logging.debug(f"PodcastsAutocomplete search='{query}'")
+        gql_query = """
+            query PodcastsAutocomplete($search: String!) {
+                podcastsAutocomplete(search: $search) {
+                    id
+                    title
+                    coverImageUrl
+                    authorName
+                    description
+                }
+            }
+        """
+        variables = {"search": query}
+        result = await self.post(headers, gql_query, variables, scraper)
+        podcasts = result.get("podcastsAutocomplete", [])
+        if not isinstance(podcasts, list):
+            return []
+        return podcasts
+
+    async def getFollowedPodcasts(self, scraper: Any) -> List[Dict[str, Any]]:
+        """Fetch podcasts the user follows.
+
+        Returns a list of podcast entries with id, title, and thumbnailUrl.
+        """
+        await self.podimoLogin(scraper)
+        headers = self.generateHeaders(self.token)
+        logging.debug("PodcastsFollowed query")
+        gql_query = """
+            query PodcastsFollowed {
+                podcastsFollowed {
+                    id
+                    title
+                    coverImageUrl
+                }
+            }
+        """
+        variables: Dict[str, Any] = {}
+        result = await self.post(headers, gql_query, variables, scraper)
+        podcasts = result.get("podcastsFollowed", [])
+        if not isinstance(podcasts, list):
+            return []
+        return podcasts
 
     def getPodcastName(self, podcast: Dict[str, Any]) -> str:
         title = podcast.get("podcast", {}).get("title", "Unknown")

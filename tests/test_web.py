@@ -1,10 +1,59 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, patch
 from main import app, podcast_id_pattern
 
 
 class TestWebRoutes:
     """Test Quart web endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_search_podcasts_returns_results(self, monkeypatch):
+        """/search?q=... should return JSON podcast results."""
+        import main
+        monkeypatch.setattr(main, "LOCAL_CREDENTIALS", True)
+        monkeypatch.setattr(main, "PODIMO_EMAIL", "test@example.com")
+        monkeypatch.setattr(main, "PODIMO_PASSWORD", "password123")
+
+        mock_client = AsyncMock()
+        mock_client.searchPodcasts = AsyncMock(return_value=[
+            {"id": "09c55c96-9b1b-456e-bdf2-3abed3b61db5", "title": "Test Podcast", "coverImageUrl": "https://cdn.example.com/img.jpg"}
+        ])
+
+        with patch.object(main, 'check_auth', new=AsyncMock(return_value=mock_client)):
+            async with app.test_client() as client:
+                response = await client.get('/search?q=test+podcast')
+                assert response.status_code == 200
+                body = await response.get_data()
+                assert b'"results"' in body
+                assert b'"Test Podcast"' in body
+
+    @pytest.mark.asyncio
+    async def test_search_podcasts_short_query(self):
+        """/search with <2 char query should return 400."""
+        async with app.test_client() as client:
+            response = await client.get('/search?q=x')
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_subscriptions_returns_followed(self, monkeypatch):
+        """/subscriptions should return JSON followed podcasts."""
+        import main
+        monkeypatch.setattr(main, "LOCAL_CREDENTIALS", True)
+        monkeypatch.setattr(main, "PODIMO_EMAIL", "test@example.com")
+        monkeypatch.setattr(main, "PODIMO_PASSWORD", "password123")
+
+        mock_client = AsyncMock()
+        mock_client.getFollowedPodcasts = AsyncMock(return_value=[
+            {"id": "09c55c96-9b1b-456e-bdf2-3abed3b61db5", "title": "My Podcast", "coverImageUrl": "https://cdn.example.com/img.jpg"}
+        ])
+
+        with patch.object(main, 'check_auth', new=AsyncMock(return_value=mock_client)):
+            async with app.test_client() as client:
+                response = await client.get('/subscriptions')
+                assert response.status_code == 200
+                body = await response.get_data()
+                assert b'"results"' in body
+                assert b'"My Podcast"' in body
 
     @pytest.mark.asyncio
     async def test_health_endpoint(self):

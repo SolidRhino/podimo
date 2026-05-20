@@ -41,6 +41,15 @@ any normal podcast player.
   <input type="password" required placeholder="Podimo password" name="password" id="password"><br />
   {% endif %}
 
+  <h2>🔍 Search for podcast</h2>
+  <label for="search_query">Search by name</label><br />
+  <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
+  <button type="button" id="searchBtn">Search</button>
+  <div id="searchResults" style="margin-top:0.5rem;"></div>
+
+  <hr style="margin:1.5rem 0;" />
+
+  <h2>📻 Or use your Podcast ID</h2>
   <label for="podcast_id">Podcast ID or URL</label><br />
   <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-...</code>) or just the ID.</small><br />
   <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"><br />
@@ -77,6 +86,74 @@ any normal podcast player.
       this.value = match[0];
     }
   });
+
+  // Podcast search via /search endpoint
+  const searchBtn = document.getElementById('searchBtn');
+  const searchInput = document.getElementById('search_query');
+  const resultsDiv = document.getElementById('searchResults');
+
+  async function doSearch() {
+    const query = searchInput.value.trim();
+    if (query.length < 2) return;
+
+    resultsDiv.innerHTML = '<em>Searching...</em>';
+
+    // Build URL with auth if credentials are needed
+    const url = new URL(window.location.origin + '/search');
+    url.searchParams.set('q', query);
+
+    {% if need_credentials %}
+    // For non-LOCAL_CREDENTIALS mode, embed credentials in URL
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    if (email && password) {
+      url.username = encodeURIComponent(email);
+      url.password = encodeURIComponent(password);
+    }
+    {% endif %}
+
+    try {
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        const text = await response.text();
+        resultsDiv.innerHTML = '<span style="color:red">Error: ' + text + '</span>';
+        return;
+      }
+      const data = await response.json();
+      if (!data.results || data.results.length === 0) {
+        resultsDiv.innerHTML = '<em>No podcasts found.</em>';
+        return;
+      }
+      let html = '<ul style="list-style:none;padding:0;margin:0;">';
+      for (const podcast of data.results) {
+        html += '<li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;border-bottom:1px solid #eee;cursor:pointer;" onclick="selectPodcast(\'' + podcast.id + '\')">';
+        if (podcast.coverImageUrl) {
+          html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48" style="border-radius:4px;object-fit:cover;">';
+        }
+        html += '<div><strong>' + podcast.title + '</strong>';
+        if (podcast.authorName) html += '<br><small>' + podcast.authorName + '</small>';
+        html += '</div></li>';
+      }
+      html += '</ul>';
+      resultsDiv.innerHTML = html;
+    } catch (err) {
+      resultsDiv.innerHTML = '<span style="color:red">Search failed: ' + err.message + '</span>';
+    }
+  }
+
+  searchBtn.addEventListener('click', doSearch);
+  searchInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doSearch();
+    }
+  });
+
+  window.selectPodcast = function(id) {
+    document.getElementById('podcast_id').value = id;
+    resultsDiv.innerHTML = '';
+    searchInput.value = '';
+  };
 </script>
 
 {% endblock %}
