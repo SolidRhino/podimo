@@ -1,6 +1,54 @@
-LICENSE.txt
-README.md
-cache/**/*
+# Git metadata
+.git
+.gitattributes
+.gitignore
+
+# GitHub CI / docs
+.github
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Virtual environments
+venv
+env
+.venv
+
+# Environment files (never bake credentials into images)
 .env
-venv/**/*
-.block-list
+.env.*
+!.env.docker
+
+# Cache directories
+cache
+podimo/__pycache__
+
+# Documentation (not needed at runtime)
+README.md
+AGENTS.md
+tutorial.md
+docs
+
+# Test suite (not needed in production image)
+tests
+pytest.ini
+mypy.ini
+
+# Development / build files
+Makefile
+docker-compose.yml
+FUNDING.yml
+LICENSE.txt
+.block-list.example
+
+# IDE / editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
