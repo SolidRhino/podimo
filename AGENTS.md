@@ -235,3 +235,23 @@ If modifying this codebase, consider:
 - Moving from `diskcache` to `redis` or similar for multi-instance deployments
 - Adding health check endpoint (`/health`) for Docker orchestration
 - Configuring `mypy --strict` (currently using basic config in `mypy.ini`)
+
+## Developer Workflow
+
+### Pushing to GitHub with 1Password
+
+If you use **1Password** for GitHub authentication, `gh` CLI will not work directly because the GitHub token is stored in 1Password rather than in your shell environment.
+
+To run any `gh` command (e.g. `gh run list`, `gh repo sync`, `gh pr create`), prepend it with:
+
+```bash
+op plugin run -- gh <command>
+# Examples:
+op plugin run -- gh run list --repo SolidRhino/podimo
+op plugin run -- gh repo sync
+op plugin run -- gh pr create
+```
+
+This ensures the `GITHUB_TOKEN` is injected from your 1Password vault for the duration of the command.
+
+If you **do not** use 1Password for GitHub auth, make sure `gh auth login` is run once to set up standard token-based authentication.
