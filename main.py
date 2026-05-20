@@ -24,7 +24,7 @@ import logging
 import time
 from os import getenv
 from functools import wraps
-from typing import Optional, Dict, Any, Tuple, List, Iterator, Callable
+from typing import Optional, Dict, Any, Tuple, List, Iterator, Callable, Awaitable
 from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, AuthenticationError
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
@@ -54,7 +54,7 @@ logging.basicConfig(
 proactive: Dict[str, List[float]] = dict()
 
 def limit_request() -> Callable:
-    def rate_limiter(func: Callable) -> Callable:
+    def rate_limiter(func: Callable[..., Awaitable[Response]]) -> Callable[..., Awaitable[Response]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
             ip = request.remote_addr or 'unknown'
