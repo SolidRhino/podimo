@@ -23,7 +23,6 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 - [Privacy](#privacy)
 - [Development](#development)
 - [License](#license)
-- [Support](#support)
 
 ---
 
@@ -218,13 +217,3 @@ Licence.
 
 https://joinup.ec.europa.eu/software/page/eupl
 ```
-
----
-
-## Support
-
-If this tool saves you time, consider buying a coffee:
-
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/thijsr) — original author
-
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/izu_x) — fork maintainer
