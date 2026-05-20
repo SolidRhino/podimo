@@ -265,28 +265,96 @@ class PodimoClient:
     async def searchPodcasts(self, query: str, scraper: Any) -> List[Dict[str, Any]]:
         """Search podcasts by name via Podimo's autocomplete endpoint.
 
-        Returns a list of podcast entries with id, title, and coverImageUrl.
+        Tries multiple query variants since Podimo's GraphQL schema changes
+        frequently and endpoints get renamed or deprecated without notice.
         """
         await self.podimoLogin(scraper)
         headers = self.generateHeaders(self.token)
-        logging.debug(f"PodcastsAutocomplete search='{query}'")
-        gql_query = """
-            query PodcastsAutocomplete($search: String!) {
-                podcastsAutocomplete(search: $search) {
-                    id
-                    title
-                    coverImageUrl
-                    authorName
-                    description
-                }
-            }
-        """
-        variables = {"search": query}
-        result = await self.post(headers, gql_query, variables, scraper)
-        podcasts = result.get("podcastsAutocomplete", [])
-        if not isinstance(podcasts, list):
-            return []
-        return podcasts
+        logging.debug(f"Podcast search query='{query}' locale={self.locale}")
+
+        # Try multiple query variants in order of likelihood
+        from typing import TypedDict, cast
+
+        class SearchVariant(TypedDict):
+            query: str
+            variables: Dict[str, Any]
+            result_key: str
+
+        variants: List[SearchVariant] = [
+            # Variant 1: current schema (may have changed fields)
+            {
+                "query": """
+                    query PodcastsAutocomplete($search: String!, $locale: String) {
+                        podcastsAutocomplete(search: $search, locale: $locale) {
+                            id
+                            title
+                            coverImageUrl
+                            authorName
+                            description
+                        }
+                    }
+                """,
+                "variables": {"search": query, "locale": self.locale},
+                "result_key": "podcastsAutocomplete",
+            },
+            # Variant 2: minimal fields (if coverImageUrl/authorName were removed)
+            {
+                "query": """
+                    query PodcastsAutocomplete($search: String!, $locale: String) {
+                        podcastsAutocomplete(search: $search, locale: $locale) {
+                            id
+                            title
+                        }
+                    }
+                """,
+                "variables": {"search": query, "locale": self.locale},
+                "result_key": "podcastsAutocomplete",
+            },
+            # Variant 3: alternative endpoint name
+            {
+                "query": """
+                    query SearchPodcasts($search: String!, $locale: String) {
+                        searchPodcasts(search: $search, locale: $locale) {
+                            id
+                            title
+                            coverImageUrl
+                        }
+                    }
+                """,
+                "variables": {"search": query, "locale": self.locale},
+                "result_key": "searchPodcasts",
+            },
+            # Variant 4: yet another possible name
+            {
+                "query": """
+                    query PodcastSearch($query: String!, $locale: String) {
+                        podcastSearch(query: $query, locale: $locale) {
+                            id
+                            title
+                            coverImageUrl
+                        }
+                    }
+                """,
+                "variables": {"query": query, "locale": self.locale},
+                "result_key": "podcastSearch",
+            },
+        ]
+
+        last_error = None
+        for variant in variants:
+            try:
+                result = await self.post(headers, variant["query"], variant["variables"], scraper)
+                podcasts = result.get(variant["result_key"], [])
+                if isinstance(podcasts, list):
+                    logging.debug(f"Search returned {len(podcasts)} results via {variant['result_key']}")
+                    return podcasts
+            except RuntimeError as e:
+                last_error = e
+                logging.debug(f"Search variant failed: {e}")
+                continue
+
+        logging.warning(f"All search variants failed. Last error: {last_error}")
+        return []
 
     async def getFollowedPodcasts(self, scraper: Any) -> List[Dict[str, Any]]:
         """Fetch podcasts the user follows.

@@ -189,13 +189,15 @@ async def search_podcasts():
             return authenticate()
         try:
             results = await client.searchPodcasts(search_query, scraper)
-            return jsonify({"results": results, "query": search_query})
+            if not results:
+                logging.warning(f"Search for '{search_query}' returned no results. Podimo API may have changed.")
+            return jsonify({"results": results, "query": search_query, "message": "Podimo search API is unstable — if no results appear, find the podcast ID manually at open.podimo.com" if not results else ""})
         except PodimoError as e:
             logging.error(f"Podimo search error: {e}")
-            return Response("Search failed — Podimo API error. Try searching from open.podimo.com directly.", 500)
+            return jsonify({"results": [], "query": search_query, "error": "Podimo search API returned an error. Try finding the podcast ID manually at open.podimo.com"}), 500
         except Exception as e:
             logging.error(f"Unexpected search error: {e}")
-            return Response("Search failed. Podimo may have changed their API.", 500)
+            return jsonify({"results": [], "query": search_query, "error": "Search failed. Podimo may have changed their API."}), 500
 
 
 @app.route("/subscriptions")
