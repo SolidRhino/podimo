@@ -3,6 +3,19 @@
 > This file provides context for AI assistants working on the codebase.
 > Last updated: 2025
 
+## Language Policy
+
+**English only.** All source code, comments, documentation, test names, commit messages, and user-facing strings must be written in English. This applies to:
+- Source code comments and docstrings
+- Variable and function names
+- Git commit messages
+- Markdown documentation and README files
+- Test names and assertions
+- Issue descriptions and PR descriptions
+- Log messages (except external API responses)
+
+Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only where they represent actual Podimo API region/locale values. Do not add Dutch-language comments, commit messages, or documentation to this project.
+
 ## Project Overview
 
 **Podimo to RSS** is a self-hosted Python web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
