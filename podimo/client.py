@@ -38,14 +38,12 @@ class AuthenticationError(PodimoError):
     """Raised when login credentials are invalid."""
     pass
 
-if ZENROWS_API is not None:
-    from zenrows import ZenRowsClient
+_zenrows_client = None
 
-_zenrows_client: Optional[ZenRowsClient] = None
-
-def _get_zenrows_client() -> Optional[ZenRowsClient]:
+def _get_zenrows_client():
     global _zenrows_client
     if _zenrows_client is None and ZENROWS_API is not None:
+        from zenrows import ZenRowsClient
         _zenrows_client = ZenRowsClient(ZENROWS_API)
     return _zenrows_client
 
