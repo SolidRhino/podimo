@@ -67,9 +67,12 @@ def limit_request() -> Callable:
                 return Response('Rate limit exceeded', 429)
             return await func(*args, **kwargs)
         return wrapper
+
     return rate_limiter
+
+
 @app.before_request
-async def log_request_start():
+async def log_request_start() -> None:
     request._start_time = time.time()  # type: ignore[attr-defined]
     logging.debug(f"--> {request.method} {request.url} from {request.remote_addr} UA={request.user_agent}")
 

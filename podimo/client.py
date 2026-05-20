@@ -136,8 +136,9 @@ class PodimoClient:
         """
         variables = {"locale": self.locale, "countryCode": self.region, "appsFlyerId": randomFlyerId()}
         result = await self.post(headers, query, variables, scraper)
-        self.prereg_id = result["userOnboardingFlow"]["id"]
-        return self.prereg_id
+        prereg_id: str = result["userOnboardingFlow"]["id"]
+        self.prereg_id = prereg_id
+        return prereg_id
 
 
     async def podimoLogin(self, scraper: Any) -> str:
