@@ -24,6 +24,8 @@ services:
     environment:
       # Override bind host so the container listens on all interfaces
       PODIMO_BIND_HOST: "0.0.0.0:12104"
+
+    healthcheck:
       # curl is installed in the Dockerfile; wget is not available in python:alpine
       test: ["CMD", "curl", "-fsS", "http://localhost:12104/health"]
       interval: 30s
