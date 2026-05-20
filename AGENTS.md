@@ -196,9 +196,13 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 
 ## Podcast ID Discovery
 
-Currently, users must manually find the podcast ID from Podimo's website or app. The web form (`templates/index.html`) will extract the UUID from a pasted Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) via client-side JavaScript regex.
+Users no longer need to manually extract podcast IDs from Podimo URLs. The web UI provides two discovery mechanisms:
 
-**Future improvement:** Add a `/search?q=<query>` endpoint that queries Podimo's GraphQL `searchPodcasts` (if available in the API schema) so users can search by name without visiting Podimo's website. Alternatively, fetch the user's subscribed podcasts after login and present them as a selectable list.
+1. **Search by name** — The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
+
+2. **Your subscriptions** — Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query).
+
+The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) — the UUID is extracted via client-side JavaScript regex.
 
 ## Testing
 
@@ -208,7 +212,7 @@ There is now a **pytest suite** with 4 test modules:
 |------|----------|
 | `tests/test_client.py` | `PodimoClient` constructor validation, `getPodcastName`, `token_key` |
 | `tests/test_rss.py` | `podcastsToRss` with/without episodes, `extract_audio_url`, `urlHeadInfo`, content-type logic |
-| `tests/test_web.py` | Quart routes (`/` 200, `/health` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
+| `tests/test_web.py` | Quart routes (`/` 200, `/health` 200, `/search` 200, `/subscriptions` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
 | `tests/test_utils.py` | `is_correct_email_address`, `generateHeaders`, `chunks`, `async_wrap` |
 
 Run with:
@@ -266,11 +270,11 @@ If modifying this codebase, consider:
 - ~~Cleaning the Dockerfile~~ ✅ Done (multi-stage + non-root)
 - ~~Replacing substring-based block list~~ ✅ Done (exact match)
 - ~~Adding health check endpoint~~ ✅ Done (`/health` JSON endpoint)
+- ~~Adding podcast search + subscriptions~~ ✅ Done (`/search`, `/subscriptions`)
 - Adding more granular rate limits per-user (currently IP-based only)
 - Moving from `diskcache` to `redis` or similar for multi-instance deployments
 - ~~Adding `workflow_dispatch` to CI~~ ✅ Done (manual test runs)
 - Configuring `mypy --strict` (currently using basic config in `mypy.ini`)
-- Adding a `/search` endpoint via Podimo GraphQL search (if schema supports it)
 
 ## Developer Workflow
 
