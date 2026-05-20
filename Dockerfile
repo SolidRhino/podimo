@@ -14,6 +14,9 @@ FROM python:3.12-alpine AS runtime
 
 WORKDIR /src
 
+# Install curl for HEALTHCHECK probes (python:3.12-alpine does not include wget)
+RUN apk add --no-cache curl
+
 # Copy installed packages from builder
 COPY --from=builder /root/.local /home/podimo/.local
 
@@ -35,6 +38,6 @@ ENV PATH=/home/podimo/.local/bin:$PATH \
 EXPOSE 12104
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:12104/ || exit 1
+    CMD curl -fsS http://127.0.0.1:12104/ || exit 1
 
 ENTRYPOINT ["python3", "main.py"]
