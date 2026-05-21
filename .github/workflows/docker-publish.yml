@@ -67,7 +67,7 @@ jobs:
         with:
           images: ${{ steps.image_name.outputs.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=ref,event=branch
             type=ref,event=tag
 
