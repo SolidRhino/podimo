@@ -20,7 +20,7 @@ docker run -d \
     --restart unless-stopped \
     -e PODIMO_BIND_HOST=0.0.0.0:12104 \
     -p 12104:12104 \
-    -v $(pwd)/podimo-cache:/src/cache \
+    -v $(pwd)/podimo-cache:/app/cache \
     ghcr.io/solidrhino/podimo:latest
 ```
 
@@ -67,7 +67,7 @@ docker run -d \
     --restart unless-stopped \
     --env-file .env \
     -p 12104:12104 \
-    -v $(pwd)/podimo-cache:/src/cache \
+    -v $(pwd)/podimo-cache:/app/cache \
     ghcr.io/solidrhino/podimo:latest
 ```
 

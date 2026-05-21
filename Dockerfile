@@ -1,43 +1,67 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: Build dependencies
-FROM python:3.12-alpine AS builder
+# Uses the -dev variant which includes apk, shell, and build tools
+FROM dhi.io/python:3.12-alpine3.23-dev AS builder
 
-WORKDIR /src
+WORKDIR /app
 
-# Build tools needed to compile lxml (feedgen dep) and other native modules
-RUN apk add --no-cache libxml2-dev libxslt-dev gcc libc-dev musl-dev
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
 
+# Build tools needed to compile lxml (feedgen dep) and other native modules.
+# Also install runtime libraries so we can copy their .so files to the runtime stage.
+RUN apk add --no-cache \
+    libxml2-dev libxslt-dev \
+    libxml2 libxslt \
+    gcc libc-dev musl-dev
+
+# Create virtual environment and install dependencies
+RUN python -m venv /app/venv
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Discover which system libraries lxml links against so we can copy them.
+# lxml's compiled extension is inside the venv; we find its .so and list
+# its dynamic dependencies via ldd, then copy those libs to a staging dir.
+RUN LXML_SO=$(find /app/venv -name 'etree*.so' -path '*/lxml/*' | head -1) && \
+    mkdir -p /app/staged-libs && \
+    if [ -n "$LXML_SO" ]; then \
+        for lib in $(ldd "$LXML_SO" 2>/dev/null | awk '{print $3}' | grep -E '^/lib|^/usr/lib' | sort -u); do \
+            [ -f "$lib" ] && cp "$lib" /app/staged-libs/ 2>/dev/null || true; \
+        done; \
+    fi && \
+    ls -la /app/staged-libs/ || echo "No staged libs needed"
 
 # Stage 2: Runtime image
-FROM python:3.12-alpine AS runtime
+# Uses the non-dev variant: no shell, no package manager, runs as nonroot.
+FROM dhi.io/python:3.12-alpine3.23 AS runtime
 
-WORKDIR /src
+WORKDIR /app
 
-# Install curl for HEALTHCHECK and libxml2/libxslt for lxml runtime
-RUN apk add --no-cache curl libxml2 libxslt
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /home/podimo/.local
+# Copy virtual environment with all installed packages
+COPY --from=builder /app/venv /app/venv
+
+# Copy system libraries needed by compiled extensions (e.g. lxml).
+# Staged from builder; if none are needed, this step is a no-op.
+COPY --from=builder /app/staged-libs /tmp/staged-libs
+RUN mkdir -p /lib && \
+    for f in /tmp/staged-libs/*; do [ -f "$f" ] && cp "$f" /lib/; done 2>/dev/null || true
 
 # Copy application code
-COPY . /src
+COPY . /app
 
-# Create non-root user
-RUN addgroup -S podimo && adduser -S podimo -G podimo \
-    && mkdir -p /src/cache \
-    && chown -R podimo:podimo /src
+# Ensure cache directory is writable by the nonroot user.
+# The runtime image runs as 'nonroot' by default.
+RUN mkdir -p /app/cache && chown -R nonroot:nonroot /app
 
-USER podimo
-
-# Ensure python can find user-installed packages
-ENV PATH=/home/podimo/.local/bin:$PATH \
-    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages \
-    PYTHONUNBUFFERED=1
+USER nonroot
 
 EXPOSE 12104
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:12104/health || exit 1
-
-ENTRYPOINT ["python3", "main.py"]
+ENTRYPOINT ["python", "main.py"]
