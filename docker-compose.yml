@@ -18,7 +18,7 @@ services:
       - .env
     volumes:
       # Persist cache (tokens, podcast episodes, HEAD metadata) across restarts
-      - podimo-cache:/app/cache
+      - podimo-cache:/tmp/podimo-cache
       # Optional: mount a local block-list file
       # - ./.block-list:/app/.block-list:ro
     environment:

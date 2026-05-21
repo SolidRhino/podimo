@@ -83,7 +83,7 @@ docker run -d \
     --restart unless-stopped \
     --env-file .env \
     -p 12104:12104 \
-    -v $(pwd)/cache:/app/cache \
+    -v $(pwd)/cache:/tmp/podimo-cache \
     ghcr.io/solidrhino/podimo:latest
 ```
 
@@ -126,7 +126,7 @@ docker compose up -d
 
 | File | Use when | Why |
 |------|----------|-----|
-| `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/app/cache` volume path, `LOCAL_CREDENTIALS=true` |
+| `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/tmp/podimo-cache` volume path, `LOCAL_CREDENTIALS=true` |
 | `.env.example` | Local Python install | Generic template — uncomment the lines you need |
 
 See [.env.docker](.env.docker) for Docker-specific defaults, or [.env.example](.env.example) for the full option reference.
