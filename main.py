@@ -422,7 +422,13 @@ def extract_audio_url(episode: Dict[str, Any]) -> Tuple[Optional[str], int]:
     return url, duration
 
 
-async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: ClientSession, locale: str) -> None:
+async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: ClientSession, locale: str, image_urls: List[str]) -> None:
+    """Add a single podcast episode to the RSS feed.
+
+    If the episode image URL isn't a standard .png/.jpg, its URL is appended
+    to image_urls for later injection into the XML tree (feedgen rejects
+    non-standard extensions). Podcast clients handle .webp fine.
+    """
     url, duration = extract_audio_url(episode)
     if url is None:
         return
@@ -452,19 +458,19 @@ async def addFeedEntry(fg: FeedGenerator, episode: Dict[str, Any], session: Clie
         fe.title(episode["title"])
 
     fe.pubDate(episode.get("publishDatetime", episode.get("datetime")))
-    # feedgen's itunes_image() rejects .webp/extensionless URLs even though
-    # podcast clients handle them fine. Bypass: write the element directly.
+
     image_url = episode.get("imageUrl")
     if image_url:
         try:
             fe.podcast.itunes_image(image_url)
         except ValueError:
-            # Podimo serves .webp or extensionless CDN URLs that feedgen rejects.
-            # Manually inject the element so podcast clients still get artwork.
-            itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-            img = etree.SubElement(fe.lxml(), "{%s}image" % itunes_ns)
-            img.set("href", str(image_url))
-            logging.debug(f"Bypassed itunes_image validation for {episode['id']}")
+            # feedgen rejects .webp/extensionless URLs. Mark for XML injection.
+            image_urls.append(str(image_url))
+            logging.debug(f"Marked itunes_image for bypass on {episode['id']}")
+        else:
+            image_urls.append("")  # Successfully added; placeholder
+    else:
+        image_urls.append("")  # No image; placeholder
 
     logging.debug(f"Found podcast '{episode['title']}'")
     fe.podcast.itunes_duration(duration)
@@ -503,12 +509,9 @@ async def podcastsToRss(podcast_id: str, data: Dict[str, Any], locale: str) -> b
     try:
         fg.image(image)
     except ValueError:
-        # feedgen rejects .webp/extensionless URLs. Bypass for channel image.
-        if image:
-            itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-            img = etree.SubElement(fg.lxml().find("channel"), "{%s}image" % itunes_ns)
-            img.set("href", str(image))
-            logging.debug(f"Bypassed channel image validation for podcast")
+        # feedgen rejects .webp/extensionless URLs for channel image.
+        # We'll inject the itunes:image element manually after generating the XML.
+        logging.debug(f"Channel image URL rejected by feedgen, will inject manually: {image}")
 
     language = podcast.get("language")
     if language is None:
@@ -523,13 +526,40 @@ async def podcastsToRss(podcast_id: str, data: Dict[str, Any], locale: str) -> b
     if not PUBLIC_FEEDS:
         fg.podcast.itunes_block(True)
 
+    # Collect episode image URLs that need manual injection (feedgen rejects webp)
+    episode_image_urls: List[str] = []
+
     async with ClientSession() as session:
         for chunk in chunks(episodes, 5):
             await asyncio.gather(
-                *[addFeedEntry(fg, episode, session, locale) for episode in chunk]
+                *[addFeedEntry(fg, episode, session, locale, episode_image_urls) for episode in chunk]
             )
 
-    feed: bytes = fg.rss_str(pretty=True)
+    # Build the RSS XML tree so we can inject non-.png/.jpg images
+    rss_elem, _ = fg._create_rss()
+    channel = rss_elem.find("channel")
+    if channel is None:
+        raise RuntimeError("Failed to generate RSS channel")
+
+    itunes_ns = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+
+    # Inject channel-level itunes:image if the URL was rejected by feedgen
+    if image and not image.endswith((".png", ".jpg", ".jpeg", ".gif")):
+        img = etree.SubElement(channel, "{%s}image" % itunes_ns)
+        img.set("href", str(image))
+        logging.debug("Injected channel itunes:image element")
+
+    # Inject episode-level itunes:image elements
+    rss_entries = channel.findall("item")
+    for idx, entry in enumerate(rss_entries):
+        if idx < len(episode_image_urls) and episode_image_urls[idx]:
+            img = etree.SubElement(entry, "{%s}image" % itunes_ns)
+            img.set("href", episode_image_urls[idx])
+            logging.debug(f"Injected episode itunes:image at index {idx}")
+
+    feed: bytes = etree.tostring(
+        rss_elem, pretty_print=True, xml_declaration=True, encoding="UTF-8"
+    )
     return feed
 
 
