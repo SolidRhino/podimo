@@ -133,7 +133,8 @@ class TestAddFeedEntry:
         mock_session = _make_session_mock({'content-length': '1024'})
 
         episode = mock_podcast_data["episodes"][0]
-        await addFeedEntry(fg, episode, mock_session, "nl-NL")
+        image_urls: list[str] = []
+        await addFeedEntry(fg, episode, mock_session, "nl-NL", image_urls)
 
         entries = fg.entry()
         assert len(entries) == 1
@@ -155,9 +156,10 @@ class TestAddFeedEntry:
         mock_session = _make_session_mock({'content-length': '1024'})
 
         episode = mock_podcast_data["episodes"][0]
+        image_urls: list[str] = []
         # Mock video_exists_at_url to return True
         with patch.object(main, 'video_exists_at_url', new=AsyncMock(return_value=True)):
-            await addFeedEntry(fg, episode, mock_session, "nl-NL")
+            await addFeedEntry(fg, episode, mock_session, "nl-NL", image_urls)
 
         entries = fg.entry()
         assert "Video URL found at:" in entries[0].description()
@@ -179,7 +181,8 @@ class TestAddFeedEntry:
             "streamMedia": None
         }
 
-        await addFeedEntry(fg, episode, mock_session, "nl-NL")
+        image_urls: list[str] = []
+        await addFeedEntry(fg, episode, mock_session, "nl-NL", image_urls)
         assert len(fg.entry()) == 0
 
 
