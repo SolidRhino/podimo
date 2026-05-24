@@ -95,7 +95,7 @@ docker-run: docker-build
 		--restart unless-stopped \
 		-e PODIMO_BIND_HOST=0.0.0.0:12104 \
 		-p 12104:12104 \
-		-v $(PWD)/cache:/src/cache \
+		-v $(PWD)/cache:/tmp/podimo-rss-cache \
 		$(DOCKER_IMAGE):latest
 	@echo "Container '$(DOCKER_CONTAINER)' started on http://localhost:12104"
 	@echo "View logs: docker logs -f $(DOCKER_CONTAINER)"
