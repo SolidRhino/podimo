@@ -1,56 +1,53 @@
-# Podimo-to-RSS
+# Podimo to RSS
 
-A self-hosted Python 3.12+ async web service that reverse-engineers Podimo's GraphQL API to generate standard RSS feeds for paywalled podcasts. Built with Quart + Hypercorn, deployed via Docker.
+A self-hosted Go 1.23+ web service that reverse-engineers the Podimo GraphQL API to turn paywalled podcasts into standard RSS feeds. Uses `net/http` + `chi` for routing and `github.com/eduncan911/podcast` for RSS assembly.
 
-# Architecture
+## Architecture
 
-Flat-module monolith with a single entrypoint (`main.py`) orchestrating all HTTP concerns, and a single package (`podimo/`) handling all external API interaction.
+Flat monolith: `main.go` orchestrates routing, middleware, and HTML serving; `podimo/` is the pure library boundary for GraphQL, auth, caching, and RSS generation.
 
 ```text
-main.py          → Quart routes, auth orchestration, RSS generation, server boot
-podimo/          → GraphQL client, caching, config, async utilities
-templates/       → Jinja2 forms (index.html, feed_location.html)
-tests/           → pytest + pytest-asyncio (mirror source structure)
+main.go          → chi routes, handlers, middleware, RSS serving
+config.go        → Env loading via godotenv, Config struct, block list
+podimo/          → GraphQL client, auth, caching, RSS assembly
+templates/       → HTML templates (index.html, feed_location.html)
+tests/           → go test (handler + per-package tests)
 ```
 
-**Flow:** Incoming request → `main.py` route handler → `check_auth()` → `PodimoClient` → Podimo GraphQL → `podcastsToRss()` → XML response.
+**Flow:** Incoming request → handler → `checkAuth()` → `PodimoClient` → Podimo GraphQL → `PodcastsToRss()` → XML response.
 
-# Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
-| `make test` | Run pytest suite (requires venv) |
-| `make lint` | Run mypy type checker |
-| `make format` | Check formatting with black (not installed by default) |
+| `make test` | Run `go test ./...` |
+| `make lint` | Run `go vet ./...` |
 | `make docker-build` | Build multi-stage Docker image |
-| `make docker-run` | Run container on localhost:12104 |
-| `make install` | Install as systemd service (Linux) |
+| `make docker-run` | Run container on `:12104` |
 
-CI: GitHub Actions matrix across Python 3.10/3.11/3.12; Docker publish on tags.
+CI: GitHub Actions — test matrix, Docker image publishing to GHCR.
 
-# Business Context
+## Business Context
 
-Users authenticate with Podimo credentials and receive an RSS URL that any podcast app can subscribe to. Supports HTTP Basic Auth (credentials embedded in URL) or `LOCAL_CREDENTIALS` mode for single-user instances.
+Users authenticate with Podimo credentials and receive an RSS URL that any podcast app can subscribe to. Supports HTTP Basic Auth (credentials embedded in URL) or `LOCAL_CREDENTIALS` mode.
 
-<important if="you are adding or modifying a Quart route">
-1. Add `@app.route("/path")` decorator
-2. Add `@limit_request()` decorator **below** the route decorator
-3. Return `Response`, `jsonify(...)`, or `render_template(...)`
-4. Ensure rate limiter is applied before async handler runs
+<important if="you are adding or modifying a chi route">
+1. Add `r.Get("/path", a.handleXxx)` or `r.With(a.rateLimitMiddleware).Get(...)` in `setupRoutes()`.
+2. Implement `func (a *App) handleXxx(w http.ResponseWriter, r *http.Request)`.
+3. Follow the standard auth resolution: branch on `a.cfg.LocalCredentials`, validate region/locale, call `a.checkAuth()`.
+4. Map `*podimo.PodcastNotFoundError` to 404, `*podimo.AuthenticationError` to 401.
 </important>
 
 <important if="you are adding or modifying environment configuration">
-- All configuration goes through `podimo/config.py` (import-time dotenv + os.environ merge)
-- Feature flags use the `bool(str(value).lower() in [...])` pattern (see `DEBUG`, `LOCAL_CREDENTIALS`)
-- Add new variable to `.env.example` for documentation
-- Use `from podimo.config import *` for module-level constants
+1. Add the field to the `Config` struct in `config.go`.
+2. Provide a default in `LoadConfig()` using `getEnv(key, fallback)` or `parseBool` / `parseDuration`.
+3. Expose validation helpers like `isValidRegion` on `*Config`.
 </important>
 
 <important if="you are changing Docker or CI configuration">
-- Dockerfile uses multi-stage `python:3.12-alpine` (builder → runtime, root → non-root)
-- Runtime `USER podimo` is set after all `RUN` steps requiring root
-- `.github/workflows/test.yml` gates CI on `mypy` + `pytest`, uploads coverage for Python 3.10 only
-- `.github/workflows/docker-publish.yml` publishes on tags and successful Tests workflow completion
+- Dockerfile uses multi-stage `golang:1.23-alpine` (builder → runtime, root → non-root).
+- `.github/workflows/test.yml` gates on `go vet` + `go test`.
+- `.github/workflows/docker-publish.yml` publishes on tags.
 </important>
 
 <important if="you are adding a new GraphQL endpoint">
@@ -58,5 +55,5 @@ See `.rpiv/guidance/podimo/architecture.md` for the PodimoClient query checklist
 </important>
 
 <important if="you are adding or modifying a template">
-See `.rpiv/guidance/templates/architecture.md` for the Jinja2 template checklist.
+See `.rpiv/guidance/templates/architecture.md` for the template checklist.
 </important>

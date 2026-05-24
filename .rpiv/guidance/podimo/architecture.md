@@ -1,115 +1,88 @@
 # podimo/ — Podimo API Adapter Layer
 
 ## Responsibility
-Encapsulates all communication with Podimo's GraphQL backend: 3-step anonymous auth token flow, paginated episode fetching, search, and subscription listing. Also provides import-time configuration, disk-backed TTL caching, and sync→async bridging utilities.
+Encapsulates the Podimo GraphQL boundary: 3-step auth flow, paginated episode fetching, search, subscription listing, RSS generation, and disk-backed TTL caching. Exported error types let HTTP handlers map domain failures to semantic status codes without string parsing.
 
 ## Dependencies
-- **diskcache**: SQLite-backed key-value stores
-- **python-dotenv**: `.env` + environment variable loading
-- **(lazy)** zenrows: optional anti-bot proxy client
-- **(lazy)** aiohttp: async HEAD requests for audio file metadata
-
-## Consumers
-- `main.py` is the sole consumer. Dependency arrow is strictly unidirectional.
+- Standard library + `github.com/eduncan911/podcast` for RSS XML.
+- Consumer: `main` package only. `podimo/` never imports `main`.
 
 ## Module Structure
 ```
 podimo/
-├── client.py    # PodimoClient — GraphQL queries, auth, proxy switching
-├── config.py    # Import-time env loading, constants, feature flags
-├── cache.py     # diskcache instances + TTL helpers
-└── utils.py     # async_wrap, header generation, validation helpers
+├── client.go / client_test.go  → PodimoClient: auth, queries, pagination
+├── graphql.go / graphql_test.go → GraphQLClient: HTTP POST wrapper
+├── rss.go / rss_test.go         → RSS builder + audio URL extraction
+└── cache.go / cache_test.go     → FileCache: disk-backed TTL
 ```
 
-## GraphQL POST with Proxy Switching
-Three backends prioritized: ScraperAPI > ZenRows > direct cloudscraper. The `scraper` parameter is duck-typed (`: Any`) — `main.py` injects the concrete instance.
+## Error Taxonomy
+Concrete errors embed `PodimoError`. Type-assert in HTTP handlers for 401/404 mapping.
 
-```python
-async def post(self, headers, query, variables, scraper):
-    if SCRAPER_API:
-        url = f"https://api.scraperapi.com?api_key={SCRAPER_API}&url={GRAPHQL_URL}&keep_headers=true"
-    elif ZENROWS_API:
-        url = GRAPHQL_URL
-        scraper = _get_zenrows_client()
-    else:
-        url = GRAPHQL_URL
+```go
+type PodimoError struct{ Message string }
+func (e PodimoError) Error() string { return e.Message }
 
-    response = await async_wrap(scraper.post)(
-        url, headers=headers, json={"query": query, "variables": variables},
-        timeout=(6.05, 30)
-    )
-    # Validate status, extract data["data"], raise RuntimeError on failure
-    return result
+type PodcastNotFoundError struct{ PodimoError }
+type AuthenticationError  struct{ PodimoError }
+
+// Handler branch — never match on string contents
+if _, ok := err.(*podimo.PodcastNotFoundError); ok {
+    http.Error(w, "Not found", http.StatusNotFound)
+}
 ```
 
-## Three-Step Auth Token Flow
-Anonymous preregister → onboarding ID → credentials exchange.
+## GraphQL Post + Untyped Response Bridge
+Queries are inline triple-quoted strings. Responses are unmarshaled into `map[string]interface{}`, then navigated with defensive type assertions.
 
-```python
-async def login(self, scraper):
-    await self.get_preregister_token(scraper)
-    await self.get_onboarding_id(scraper)
-    result = await self.post(..., query=AUTHORIZE_QUERY, ...)
-    self.token = result["tokenWithCredentials"]["token"]
+```go
+var result map[string]interface{}
+err := c.graphql.Query(ctx, headers, query, variables, &result)
+podcast, ok := result["podcast"].(map[string]interface{})
 ```
 
-## Cache Entry Pattern (Native TTL)
-Use diskcache's native `expire` parameter instead of manual tuples.
+Paginated endpoints stitch pages into a single result: first page captures metadata; subsequent pages append only the `episodes` slice.
 
-```python
-def get_entry(key, cache):
-    return cache.get(key)
+## Stateful Client with Lazy Login
+`PodimoClient` restores its bearer token from `FileCache` on construction. `Login()` returns immediately when `Token()` is already populated.
 
-# Use expire=N (seconds); legacy manual (timestamp, value) tuples exist
-# in older code but should not be copied for new caches
-def put_entry(key, value, ttl, cache):
-    cache.set(key, value, expire=ttl)
+```go
+client, _ := podimo.NewPodimoClient(user, pass, region, locale,
+    graphql, tokenCache, podcastCache, logger)
+if client.Token() != "" {
+    return client, nil // cache hit; skip remote login
+}
+token, err := client.Login(ctx)
 ```
 
-## Async Wrap Bridge (Sync → Async)
-Wraps any sync callable into the default ThreadPoolExecutor so the Quart event loop isn't blocked.
+## File Cache
+Per-key JSON files (`<key>.json`) with embedded `expires_at`. Per-key mutex isolates concurrent writes to different keys.
 
-```python
-def async_wrap(func):
-    async def run(*args, **kwargs):
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-    return run
+```go
+cache.Set(key, value, ttl)
+if v, ok := cache.Get(key); ok { /* type-assert expected shape */ }
 ```
 
-## Exception Hierarchy
-All client errors extend `PodimoError` so the web layer can catch them generically.
+## Parallel Chunked RSS Workers
+Each episode requires an HTTP HEAD call for enclosure metadata. Episodes process in chunks of 5 with `sync.WaitGroup`. HEAD failures fallback to safe defaults (`audio/mpeg`, length 0) so one bad episode does not abort the feed.
 
-```python
-class PodimoError(Exception):
-    pass
-
-class PodcastNotFoundError(PodimoError):
-    pass
-
-class AuthenticationError(PodimoError):
-    pass
+```go
+for _, chunk := range chunks(episodes, 5) {
+    items := make([]podcast.Item, len(chunk))
+    // goroutine per episode → buildFeedItem(ctx, ep) → items[idx] = item
+}
 ```
-
-## Naming
-New code uses `snake_case`. Legacy `camelCase` remains in older `PodimoClient` methods (e.g. `getPodcastName`).
-
-## Architectural Boundaries
-- **NO formal HTTP client interface** — `scraper: Any` remains duck-typed.
-- **Unidirectional dependency** — `podimo/` never imports `main.py`.
-- **Import-time side effects** — `config.py` loads `.env` and reconfigures global logging at import time.
 
 <important if="you are adding a new GraphQL query">
-1. Ensure authenticated if endpoint requires bearer (`await self.podimo_login(scraper)`)
-2. Generate headers: `self.generate_headers(self.token)` or `self.generate_headers(None)`
-3. Write triple-quoted query string; inline fragments in same string
-4. Assemble variables dict; every declared variable must be consumed in query body
-5. For unstable endpoints, implement fallback variants with different result keys
+1. Write an inline triple-quoted query string. Every declared `$variable` must be consumed in the query body.
+2. Pass `map[string]interface{}` to `c.graphql.Query(ctx, headers, query, variables, &result)`.
+3. Type-assert every nested field with two-step `x, ok := y.(T)`.
+4. Map upstream auth failures to `AuthenticationError`; missing resources to `PodcastNotFoundError`.
+5. Cache the stitched result (not per-page fragments) when applicable.
 </important>
 
-<important if="you are adding a new cache type">
-1. Create `Cache(join(CACHE_DIR, 'my_domain_cache'))` as module-level instance
-2. Add `get_my_entry(key)` → `cache.get(key)`
-3. Add `put_my_entry(key, value)` → `cache.set(key, value, expire=TTL)`
-4. Avoid the legacy `(timestamp, value)` tuple pattern used in older caches
+<important if="you are adding a new cache consumer">
+1. Create `podimo.NewFileCache(filepath.Join(cfg.CacheDir, "my_cache"))`.
+2. Store values with `cache.Set(key, value, ttl)`.
+3. Read defensively: `if v, ok := cache.Get(key); ok { /* type-assert */ }`.
 </important>

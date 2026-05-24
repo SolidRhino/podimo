@@ -1,82 +1,66 @@
 # templates/ — Presentation Layer
 
 ## Responsibility
-Server-rendered Jinja2 HTML for the Quart web UI. Two user-facing pages (`index.html`, `feed_location.html`) plus a single base layout. No static asset pipeline; all CSS and JS are inline.
+Server-rendered HTML for the web UI. Two standalone page templates parsed via `//go:embed` at build time. No template inheritance, no static asset pipeline, no CSRF tokens.
 
 ## Dependencies
-- Quart's built-in Jinja2 environment (`render_template`)
-- CDN script `qrcode.min.js` loaded by `feed_location.html`
+- Go `html/template` + `embed` from the standard library.
+- `qrcode.min.js` CDN in `feed_location.html`.
 
 ## Consumers
-- `main.py` route handlers render templates via `render_template`
-- No other modules reference templates
+- `main.go` parses templates on startup into `*template.Template` fields on `App`.
+- Handlers render via `Execute(w, data)` with `map[string]interface{}` view models.
 
 ## Module Structure
 ```
 templates/
-└── *.html   # Page templates (flat, no subdirectories)
+├── index.html          → GET `/` form, search UI, conditional fields
+└── feed_location.html  → POST `/` result page with QR code + copy button
 ```
 
-| File | Role |
-|------|------|
-| `base.html` | Root layout with `{% block body %}` |
-| `index.html` | Form + search UI (extends `base.html`) |
-| `feed_location.html` | Result page with QR code (extends `base.html`) |
+## Build-Time Embedding
+Templates are embedded with `//go:embed` and parsed once at boot. Syntax errors are boot-time failures (`os.Exit`).
 
-## Base Template Inheritance
-All pages extend `base.html` and override only the `body` block.
+```go
+//go:embed templates/*
+var templatesFS embed.FS
 
-```html
-<!-- templates/base.html -->
-<!doctype html>
-<html>
-<head>
-  <title>Podimo-to-RSS converter</title>
-  <meta name="robots" content="noindex, nofollow">
-  <style>/* inline global CSS */</style>
-</head>
-<body>
-  {% block body %}{% endblock %}
-</body>
-</html>
+tmpl, err := template.ParseFS(templatesFS, "templates/index.html")
 ```
 
-## Context-Driven Conditional Rendering
-Flags passed from route handlers control UI sections.
+## Self-Contained Pages
+Each template is a complete standalone HTML5 document with inline CSS and JS. There is no `base.html`, no partials, and no shared layout. CSS changes must be copied to every template that uses them.
 
-```html
-{% if error %}
-<h2>Error: {{ error }}</h2>
-{% endif %}
+## Form Post-Back with Conditional Re-Render
+`handleIndex` serves both GET and POST. On validation errors, `index.html` is re-rendered with `.Error`; on success, `feed_location.html` is rendered with `.URL`.
+
+```go
+data := map[string]interface{}{
+    "Regions":         a.cfg.Regions,
+    "Locales":         a.cfg.Locales,
+    "NeedCredentials": !a.cfg.LocalCredentials,
+}
 ```
 
-## Inline JavaScript Bootstrapping
-Server-side values are interpolated directly into `<script>` blocks.
+## Server-to-Client JS Injection
+Server values interpolate directly into `<script>` blocks. `html/template` auto-escapes string interpolations to prevent XSS.
 
 ```html
 <script>
-  const url = "{{ url }}";
-  // Jinja2 conditionals may emit entire JS blocks:
-  {% if need_credentials %}
-  const email = document.getElementById('email').value;
-  {% endif %}
+  const needAuth = {{ .NeedCredentials }}; // boolean
+  const endpoint = "{{ .SearchEndpoint }}";
 </script>
 ```
 
-## Architectural Boundaries
-- **No static directory** — there is no `static/` folder; assets are inline or CDN.
-- **No CSRF protection** — form POSTs lack CSRF tokens.
-- **Single inheritance depth** — only `base.html` → page template.
-
 <important if="you are adding a new page template">
-1. Create `templates/page_name.html`
-2. Start with `{% extends "base.html" %}` and define `{% block body %}`
-3. Add the Quart route in `main.py` returning `await render_template("page_name.html", ...)`
-4. Pass serializable values only; no complex objects
+1. Create `templates/<page>.html` as a complete standalone HTML5 document with inline CSS.
+2. Add `//go:embed` + `template.ParseFS` in `main.go` startup; store the parsed template on `App`.
+
+3. Add a handler method on `*App` and wire the route in `setupRoutes()`.
 </important>
 
-<important if="you are adding conditional UI to an existing template">
-1. Pass the boolean flag from the route handler
-2. Wrap markup in `{% if flag %}...{% endif %}`
-3. Ensure the variable is defined in every `render_template` call for that template
+<important if="you are adding a new form field">
+1. Add `<input name="field">` inside `index.html`.
+2. In `handleIndex` POST, read with `r.FormValue("field")` and validate.
+3. On error, preserve the submitted value in the re-render data map.
 </important>
