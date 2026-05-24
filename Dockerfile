@@ -1,43 +1,35 @@
-# Stage 1: Build dependencies
-FROM python:3.12-alpine AS builder
+# Stage 1: Build
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /src
 
-# Build tools needed to compile lxml (feedgen dep) and other native modules
-RUN apk add --no-cache libxml2-dev libxslt-dev gcc libc-dev musl-dev
+RUN apk add --no-cache git
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Stage 2: Runtime image
-FROM python:3.12-alpine AS runtime
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o podimo-rss .
+
+# Stage 2: Runtime
+FROM alpine:latest AS runtime
 
 WORKDIR /src
 
-# Install curl for HEALTHCHECK and libxml2/libxslt for lxml runtime
-RUN apk add --no-cache curl libxml2 libxslt
+RUN apk add --no-cache curl ca-certificates
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /home/podimo/.local
+COPY --from=builder /src/podimo-rss /src/podimo-rss
+COPY --from=builder /src/templates /src/templates
 
-# Copy application code
-COPY . /src
-
-# Create non-root user
 RUN addgroup -S podimo && adduser -S podimo -G podimo \
     && mkdir -p /src/cache \
     && chown -R podimo:podimo /src
 
 USER podimo
 
-# Ensure python can find user-installed packages
-ENV PATH=/home/podimo/.local/bin:$PATH \
-    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages \
-    PYTHONUNBUFFERED=1
-
 EXPOSE 12104
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:12104/health || exit 1
 
-ENTRYPOINT ["python3", "main.py"]
+ENTRYPOINT ["/src/podimo-rss"]
