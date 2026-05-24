@@ -1,42 +1,86 @@
-{% extends "base.html" %}
+<!doctype html>
+<html>
+<head>
+  <title>Podimo-to-RSS converter</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    html {
+      max-width: 80ch;
+      padding: calc(1vmin + .5rem);
+      margin-inline: auto;
+      font-family: system-ui;
+      background-color: #eeeeee;
+    }
+    body :not(:is(h1, h2, h3, h4, h5, h6)) {
+      line-height: 1.75;
+    }
+    form {
+      padding-top: 1rem;
+    }
+    *:not(:is(h1, h2, h3, h4, h5, h6)) {
+      font-size: clamp(1rem, 0.909rem + 0.45vmin, 1.25rem);
+    }
+    select, button, input {
+      border: 0;
+      width: 100%;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      background-color: #fff;
+      color: #000;
+    }
+    @media (prefers-color-scheme: dark) {
+      html {
+        color: #fff;
+        background-color: #000;
+      }
+      select, button, input {
+        background-color: #262626;
+        color: #fff;
+      }
+      a {
+        color: #eee;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Your RSS feed is ready</h1>
 
-{% block body %}
-<h1>Your RSS feed is ready</h1>
+  <p>Copy this link into your podcast player (only works if it supports custom private RSS feeds).</p>
 
-<p>Copy this link into your podcast player (only works if it supports custom private RSS feeds).</p>
+  <p>
+    <a href="{{ .URL }}" id="feed-url">{{ .URL }}</a>
+  </p>
 
-<p>
-  <a href="{{ url }}" id="feed-url">{{ url }}</a>
-</p>
+  <div id="button"></div>
 
-<div id="button"></div>
+  <h2>QR Code</h2>
+  <p>Scan with your phone to add the feed directly.</p>
+  <div id="qrcode" style="margin: 1rem 0;"></div>
 
-<h2>QR Code</h2>
-<p>Scan with your phone to add the feed directly.</p>
-<div id="qrcode" style="margin: 1rem 0;"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSE1QMDIzWPHnnv/HakYGWopdB3/oHwxIpRg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>
+    const url = "{{ .URL }}";
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSE1QMDIzWPHnnv/HakYGWopdB3/oHwxIpRg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script>
-  const url = "{{ url }}";
+    // Copy button
+    function copy() {
+      navigator.clipboard.writeText(url).then(() => {
+        document.getElementById('copy').innerHTML = "Copied!";
+        setTimeout(setButtonDiv, 2000);
+      });
+    }
+    function setButtonDiv() {
+      document.getElementById("button").innerHTML = "<button id='copy' onclick='copy()'>Copy to clipboard</button>";
+    }
+    setButtonDiv();
 
-  // Copy button
-  function copy() {
-    navigator.clipboard.writeText(url).then(() => {
-      document.getElementById('copy').innerHTML = "Copied!";
-      setTimeout(setButtonDiv, 2000);
+    // QR code
+    new QRCode(document.getElementById("qrcode"), {
+      text: url,
+      width: 200,
+      height: 200,
     });
-  }
-  function setButtonDiv() {
-    document.getElementById("button").innerHTML = "<button id='copy' onclick='copy()'>Copy to clipboard</button>";
-  }
-  setButtonDiv();
-
-  // QR code
-  new QRCode(document.getElementById("qrcode"), {
-    text: url,
-    width: 200,
-    height: 200,
-  });
-</script>
-
-{% endblock %}
+  </script>
+</body>
+</html>

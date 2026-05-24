@@ -1,36 +1,15 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+# Build artifacts
+podimo-rss
+*.exe
 
-# Distribution / packaging
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# Virtual environments
-venv/
-.venv/
-env/
-ENV/
+# Go
+vendor/
+*.test
 
 # Environment files (contain secrets)
 .env
 .env.local
 .env.*.local
-
-# pytest
-.pytest_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
 
 # Caches
 cache/

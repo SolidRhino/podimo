@@ -1,12 +1,100 @@
-{% extends "base.html" %}
+<!doctype html>
+<html>
+<head>
+  <title>Podimo-to-RSS converter</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    html {
+      max-width: 80ch;
+      padding: calc(1vmin + .5rem);
+      margin-inline: auto;
+      font-family: system-ui;
+      background-color: #eeeeee;
+    }
+    body :not(:is(h1, h2, h3, h4, h5, h6)) {
+      line-height: 1.75;
+    }
+    form {
+      padding-top: 1rem;
+    }
+    *:not(:is(h1, h2, h3, h4, h5, h6)) {
+      font-size: clamp(1rem, 0.909rem + 0.45vmin, 1.25rem);
+    }
+    select, button, input {
+      border: 0;
+      width: 100%;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      background-color: #fff;
+      color: #000;
+    }
+    input[type=submit] {
+      margin: 1rem 0 2rem 0;
+    }
+    form:invalid input[type=submit] {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+    input:invalid {
+      background: url("data:image/svg+xml,%3Csvg%20width%3D%221.0625em%22%20id%3D%22triangle%22%20height%3D%221em%22%20viewBox%3D%220%200%2017%2016%22%20fill%3D%22black%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M8.982%201.566a1.13%201.13%200%200%200-1.96%200L.165%2013.233c-.457.778.091%201.767.98%201.767h13.713c.889%200%201.438-.99.98-1.767L8.982%201.566zM8%205a.905.905%200%200%200-.9.995l.35%203.507a.552.552%200%200%200%201.1%200l.35-3.507A.905.905%200%200%200%208%205zm.002%206a1%201%200%201%200%200%202%201%201%200%200%200%200-2z%22%20%2F%3E%3C%2Fsvg%3E%0A") no-repeat 95% 50% #ffffff;
+      background-size: 1.5rem;
+    }
+    details {
+      padding: 1rem 0;
+      cursor: pointer;
+    }
+    details>summary {
+      padding: 1rem;
+      background-color: #cccccc;
+    }
+    footer {
+      margin: 1rem 0 2rem 0;
+      background-color: #cccccc;
+      padding: 1rem;
+    }
+    details>ol {
+      margin: 0;
+      background-color: #e6e6e6;
+      padding: 1rem 2rem 1rem 3rem;
+    }
+    #triangle {
+      display: none;
+    }
+    @media (prefers-color-scheme: dark) {
+      html {
+        color: #fff;
+        background-color: #000;
+      }
+      details>summary {
+        background-color: #262626;
+      }
+      details>ol {
+        background-color: #404040;
+      }
+      footer {
+        background-color: #262626;
+      }
+      a {
+        color: #eee;
+      }
+      select, button, input {
+        background-color: #262626;
+        color: #fff;
+      }
+      input:invalid {
+        background: url("data:image/svg+xml,%3Csvg%20width%3D%221.0625em%22%20id%3D%22triangle%22%20height%3D%221em%22%20viewBox%3D%220%200%2017%2016%22%20fill%3D%22white%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M8.982%201.566a1.13%201.13%200%200%200-1.96%200L.165%2013.233c-.457.778.091%201.767.98%201.767h13.713c.889%200%201.438-.99.98-1.767L8.982%201.566zM8%205a.905.905%200%200%200-.9.995l.35%203.507a.552.552%200%200%200%201.1%200l.35-3.507A.905.905%200%200%200%208%205zm.002%206a1%201%200%201%200%200%202%201%201%200%200%200%200-2z%22%20%2F%3E%3C%2Fsvg%3E%0A") no-repeat 95% 50% #404040;
+        background-size: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Podimo-to-RSS converter</h1>
+  <p>This program converts shows on Podimo to an RSS feed that can be used with any normal podcast player.</p>
 
-{% block body %}
-<h1>Podimo-to-RSS converter</h1>
-This program converts shows on Podimo to an RSS feed that can be used with
-any normal podcast player.
-
-<details>
-  <summary>Using Apple/Facebook/Google to log in to Podimo?</summary>
+  <details>
+    <summary>Using Apple/Facebook/Google to log in to Podimo?</summary>
     <ol>
       <u>Try the following steps:</u>
       <li>Login at Podimo like you normally would</li>
@@ -17,143 +105,140 @@ any normal podcast player.
       <li>You should now be able to login to Podimo with the email address from step 2 and the password you just created. You don't have to use the Sign in with Apple/Facebook/Google buttons anymore.</li>
       <li>Verify that you can login to Podimo with your new credentials. If you can, then <em>you are able to use this site!</em></li>
     </ol>
-</details>
+  </details>
 
-{% if error %}
-<u><h2>Error: {{ error }}</h2></u>
-{% endif %}
+  {{ if .Error }}
+  <u><h2>Error: {{ .Error }}</h2></u>
+  {{ end }}
 
-{% if need_credentials %}
-<div style="background:#f8d7da; color:#721c24; padding:1rem; margin-bottom:1rem;">
-  <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
-  (e.g. <code>https://your-email:your-password@...</code>). This URL will be saved in your podcast app,
-  browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
-  for a single-user instance instead.
-</div>
-{% endif %}
+  {{ if .NeedCredentials }}
+  <div style="background:#f8d7da; color:#721c24; padding:1rem; margin-bottom:1rem;">
+    <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
+    (e.g. <code>https://your-email:your-password@...</code>). This URL will be saved in your podcast app,
+    browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
+    for a single-user instance instead.
+  </div>
+  {{ end }}
 
-<form action="./" method="post">
-  {% if need_credentials %}
-  <label for="email">Your Podimo email address</label> <br />
-  <input type="email" required placeholder="Podimo email address" name="email" id="email"><br />
+  <form action="./" method="post">
+    {{ if .NeedCredentials }}
+    <label for="email">Your Podimo email address</label><br />
+    <input type="email" required placeholder="Podimo email address" name="email" id="email"><br />
 
-  <label for="password">Your Podimo password</label><br />
-  <input type="password" required placeholder="Podimo password" name="password" id="password"><br />
-  {% endif %}
+    <label for="password">Your Podimo password</label><br />
+    <input type="password" required placeholder="Podimo password" name="password" id="password"><br />
+    {{ end }}
 
-  <h2>🔍 Search for podcast</h2>
-  <label for="search_query">Search by name</label><br />
-  <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
-  <button type="button" id="searchBtn">Search</button>
-  <div id="searchResults" style="margin-top:0.5rem;"></div>
+    <h2>🔍 Search for podcast</h2>
+    <label for="search_query">Search by name</label><br />
+    <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
+    <button type="button" id="searchBtn">Search</button>
+    <div id="searchResults" style="margin-top:0.5rem;"></div>
 
-  <hr style="margin:1.5rem 0;" />
+    <hr style="margin:1.5rem 0;" />
 
-  <h2>📻 Or use your Podcast ID</h2>
-  <label for="podcast_id">Podcast ID or URL</label><br />
-  <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-...</code>) or just the ID.</small><br />
-  <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"><br />
+    <h2>📻 Or use your Podcast ID</h2>
+    <label for="podcast_id">Podcast ID or URL</label><br />
+    <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-...</code>) or just the ID.</small><br />
+    <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"><br />
 
-  <label for="region">Region</label><br />
-  <select name="region" id="region">
-    {% for (country_code, region) in regions %}
-    <option value="{{country_code}}">{{ region }}</option>
-    {% endfor %}
-  </select>
-  <br />
+    <label for="region">Region</label><br />
+    <select name="region" id="region">
+      {{ range .Regions }}
+      <option value="{{ .Code }}">{{ .Name }}</option>
+      {{ end }}
+    </select>
+    <br />
 
-  <label for="locale">Locale</label><br />
-  <select name="locale" id="locale">
-    {% for locale in locales %}
-    <option>{{ locale }}</option>
-    {% endfor %}
-  </select>
+    <label for="locale">Locale</label><br />
+    <select name="locale" id="locale">
+      {{ range .Locales }}
+      <option>{{ . }}</option>
+      {{ end }}
+    </select>
 
-  <footer>
-    Licensed under the EUPL-1.2 license - Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
-    If you find this useful, consider <a href="https://www.buymeacoffee.com/thijsr">buying the original author a coffee ☕</a>
-  </footer>
+    <footer>
+      Licensed under the EUPL-1.2 license - Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
+      If you find this useful, consider <a href="https://www.buymeacoffee.com/thijsr">buying the original author a coffee ☕</a>
+    </footer>
 
-  <input type="submit" value="Create RSS URL" />
-</form>
+    <input type="submit" value="Create RSS URL" />
+  </form>
 
-<script>
-  const input = document.getElementById('podcast_id');
-  input.addEventListener('input', function () {
-    const val = this.value.trim();
-    const match = val.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    if (match) {
-      this.value = match[0];
-    }
-  });
-
-  // Podcast search via /search endpoint
-  const searchBtn = document.getElementById('searchBtn');
-  const searchInput = document.getElementById('search_query');
-  const resultsDiv = document.getElementById('searchResults');
-
-  async function doSearch() {
-    const query = searchInput.value.trim();
-    if (query.length < 2) return;
-
-    resultsDiv.innerHTML = '<em>Searching...</em>';
-
-    // Build URL with auth if credentials are needed
-    const url = new URL(window.location.origin + '/search');
-    url.searchParams.set('q', query);
-
-    {% if need_credentials %}
-    // For non-LOCAL_CREDENTIALS mode, embed credentials in URL
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    if (email && password) {
-      url.username = encodeURIComponent(email);
-      url.password = encodeURIComponent(password);
-    }
-    {% endif %}
-
-    try {
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        const text = await response.text();
-        resultsDiv.innerHTML = '<span style="color:red">Error: ' + text + '</span>';
-        return;
+  <script>
+    const input = document.getElementById('podcast_id');
+    input.addEventListener('input', function () {
+      const val = this.value.trim();
+      const match = val.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (match) {
+        this.value = match[0];
       }
-      const data = await response.json();
-      if (!data.results || data.results.length === 0) {
-        resultsDiv.innerHTML = '<em>No podcasts found.</em>';
-        return;
+    });
+
+    const searchBtn = document.getElementById('searchBtn');
+    const searchInput = document.getElementById('search_query');
+    const resultsDiv = document.getElementById('searchResults');
+
+    async function doSearch() {
+      const query = searchInput.value.trim();
+      if (query.length < 2) return;
+
+      resultsDiv.innerHTML = '<em>Searching...</em>';
+
+      const url = new URL(window.location.origin + '/search');
+      url.searchParams.set('q', query);
+
+      {{ if .NeedCredentials }}
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      if (email && password) {
+        url.username = encodeURIComponent(email);
+        url.password = encodeURIComponent(password);
       }
-      let html = '<ul style="list-style:none;padding:0;margin:0;">';
-      for (const podcast of data.results) {
-        html += '<li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;border-bottom:1px solid #eee;cursor:pointer;" onclick="selectPodcast(\'' + podcast.id + '\')">';
-        if (podcast.coverImageUrl) {
-          html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48" style="border-radius:4px;object-fit:cover;">';
+      {{ end }}
+
+      try {
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+          const text = await response.text();
+          resultsDiv.innerHTML = '<span style="color:red">Error: ' + text + '</span>';
+          return;
         }
-        html += '<div><strong>' + podcast.title + '</strong>';
-        if (podcast.authorName) html += '<br><small>' + podcast.authorName + '</small>';
-        html += '</div></li>';
+        const data = await response.json();
+        if (!data.results || data.results.length === 0) {
+          resultsDiv.innerHTML = '<em>No podcasts found.</em>';
+          return;
+        }
+        let html = '<ul style="list-style:none;padding:0;margin:0;">';
+        for (const podcast of data.results) {
+          html += '<li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;border-bottom:1px solid #eee;cursor:pointer;" onclick="selectPodcast(\'' + podcast.id + '\')">';
+          if (podcast.coverImageUrl) {
+            html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48" style="border-radius:4px;object-fit:cover;">';
+          }
+          html += '<div><strong>' + podcast.title + '</strong>';
+          if (podcast.authorName) html += '<br><small>' + podcast.authorName + '</small>';
+          html += '</div></li>';
+        }
+        html += '</ul>';
+        resultsDiv.innerHTML = html;
+      } catch (err) {
+        resultsDiv.innerHTML = '<span style="color:red">Search failed: ' + err.message + '</span>';
       }
-      html += '</ul>';
-      resultsDiv.innerHTML = html;
-    } catch (err) {
-      resultsDiv.innerHTML = '<span style="color:red">Search failed: ' + err.message + '</span>';
     }
-  }
 
-  searchBtn.addEventListener('click', doSearch);
-  searchInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      doSearch();
-    }
-  });
+    searchBtn.addEventListener('click', doSearch);
+    searchInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        doSearch();
+      }
+    });
 
-  window.selectPodcast = function(id) {
-    document.getElementById('podcast_id').value = id;
-    resultsDiv.innerHTML = '';
-    searchInput.value = '';
-  };
-</script>
-
-{% endblock %}
+    window.selectPodcast = function(id) {
+      document.getElementById('podcast_id').value = id;
+      resultsDiv.innerHTML = '';
+      searchInput.value = '';
+    };
+  </script>
+</body>
+</html>
