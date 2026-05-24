@@ -2,12 +2,26 @@ package podimo
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+type failNTimesTransport struct {
+	n    int
+	base http.RoundTripper
+}
+
+func (t *failNTimesTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.n > 0 {
+		t.n--
+		return nil, fmt.Errorf("simulated network error")
+	}
+	return t.base.RoundTrip(req)
+}
 
 func TestChunks(t *testing.T) {
 	items := []interface{}{1, 2, 3, 4, 5, 6, 7}
@@ -78,6 +92,62 @@ func TestURLHeadInfo_Network(t *testing.T) {
 	cl2, ct2, err2 := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour)
 	if err2 != nil || cl2 != "42" || ct2 != "audio/mpeg" {
 		t.Fatalf("expected cache hit")
+	}
+}
+
+func TestURLHeadInfo_RetrySuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Fatalf("expected HEAD, got %s", r.Method)
+		}
+		w.Header().Set("Content-Length", "999")
+		w.Header().Set("Content-Type", "audio/mp4")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	client := srv.Client()
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = &failNTimesTransport{n: 2, base: base}
+
+	dir := t.TempDir()
+	c, _ := NewFileCache(dir)
+	cl, ct, err := URLHeadInfo(context.Background(), client, "retry-ep", srv.URL, nil, c, time.Hour)
+	if err != nil {
+		t.Fatalf("unexpected error after retries: %v", err)
+	}
+	if cl != "999" {
+		t.Fatalf("expected Content-Length 999, got %s", cl)
+	}
+	if ct != "audio/mp4" {
+		t.Fatalf("expected audio/mp4, got %s", ct)
+	}
+}
+
+func TestURLHeadInfo_RetryExhausted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Fatalf("expected HEAD, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := srv.Client()
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = &failNTimesTransport{n: 5, base: base}
+
+	dir := t.TempDir()
+	c, _ := NewFileCache(dir)
+	_, _, err := URLHeadInfo(context.Background(), client, "fail-ep", srv.URL, nil, c, time.Hour)
+	if err == nil {
+		t.Fatalf("expected error after all retries exhausted")
 	}
 }
 
