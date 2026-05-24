@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"math/rand"
 	"strings"
 	"time"
@@ -45,9 +46,10 @@ type PodimoClient struct {
 	graphql      *GraphQLClient
 	tokenCache   *FileCache
 	podcastCache *FileCache
+	logger       *slog.Logger
 }
 
-func NewPodimoClient(username, password, region, locale string, graphql *GraphQLClient, tokenCache, podcastCache *FileCache) (*PodimoClient, error) {
+func NewPodimoClient(username, password, region, locale string, graphql *GraphQLClient, tokenCache, podcastCache *FileCache, logger *slog.Logger) (*PodimoClient, error) {
 	if username == "" || password == "" {
 		return nil, fmt.Errorf("empty username or password")
 	}
@@ -58,6 +60,10 @@ func NewPodimoClient(username, password, region, locale string, graphql *GraphQL
 	key := TokenKey(username, password)
 	storedToken, _ := tokenCache.Get(key)
 
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	client := &PodimoClient{
 		username:     username,
 		password:     password,
@@ -67,6 +73,7 @@ func NewPodimoClient(username, password, region, locale string, graphql *GraphQL
 		graphql:      graphql,
 		tokenCache:   tokenCache,
 		podcastCache: podcastCache,
+		logger:       logger,
 	}
 	if str, ok := storedToken.(string); ok {
 		client.token = str
@@ -391,7 +398,7 @@ func (c *PodimoClient) SearchPodcasts(ctx context.Context, query string) ([]map[
 	}
 
 	if lastErr != nil {
-		log.Printf("SearchPodcasts: all variants failed, last error: %v", lastErr)
+		c.logger.Warn("SearchPodcasts: all variants failed", "error", lastErr)
 	}
 	return []map[string]interface{}{}, nil
 }

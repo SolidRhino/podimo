@@ -28,7 +28,7 @@ func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httpte
 }
 
 func TestNewPodimoClient_Validation(t *testing.T) {
-	_, err := NewPodimoClient("", "", "nl", "nl-NL", nil, nil, nil)
+	_, err := NewPodimoClient("", "", "nl", "nl-NL", nil, nil, nil, nil)
 	if err == nil || err.Error() != "empty username or password" {
 		t.Fatalf("expected validation error, got %v", err)
 	}
@@ -40,7 +40,7 @@ func TestNewPodimoClient_LoadsCachedToken(t *testing.T) {
 	tc.Set(TokenKey("user", "pass"), "cached-token", time.Hour)
 	gl := NewGraphQLClient("http://localhost", nil)
 	pc, _ := NewFileCache(dir)
-	client, err := NewPodimoClient("user", "pass", "nl", "nl-NL", gl, tc, pc)
+	client, err := NewPodimoClient("user", "pass", "nl", "nl-NL", gl, tc, pc, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestPodimoClient_Login(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	token, err := client.Login(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -84,7 +84,7 @@ func TestPodimoClient_Login_InvalidCredentials(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	_, err := client.Login(context.Background())
 	if _, ok := err.(*AuthenticationError); !ok {
 		t.Fatalf("expected AuthenticationError, got %T %v", err, err)
@@ -103,7 +103,7 @@ func TestPodimoClient_GetPodcasts_Cache(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	// Ensure token is set so GetPodcasts doesn't try to use the mock for login
 	client.Login(context.Background())
 
@@ -138,7 +138,7 @@ func TestPodimoClient_SearchPodcasts(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	results, err := client.SearchPodcasts(context.Background(), "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -166,7 +166,7 @@ func TestPodimoClient_SearchPodcasts_AllVariantsFail(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	client.token = "fake" // skip login
 	results, err := client.SearchPodcasts(context.Background(), "test")
 	if err != nil {
@@ -191,7 +191,7 @@ func TestPodimoClient_GetFollowedPodcasts(t *testing.T) {
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
 	gl := NewGraphQLClient(srv.URL, srv.Client())
-	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	results, err := client.GetFollowedPodcasts(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

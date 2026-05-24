@@ -490,7 +490,7 @@ func (a *App) checkAuth(ctx context.Context, username, password, region, locale 
 	key := podimo.TokenKey(username, password)
 	httpClient := a.getHTTPClient(key)
 	graphql := podimo.NewGraphQLClient(a.graphqlEndpoint(), httpClient)
-	client, err := podimo.NewPodimoClient(username, password, region, locale, graphql, a.tokenCache, a.podcastCache)
+	client, err := podimo.NewPodimoClient(username, password, region, locale, graphql, a.tokenCache, a.podcastCache, a.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -598,13 +598,8 @@ func (a *App) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) buildFeedURL(podcastID, region, locale string) string {
-	if a.cfg.LocalCredentials {
-		return fmt.Sprintf("%s://%s/feed/%s.xml?region=%s&locale=%s&random=%s",
-			a.cfg.Protocol, a.cfg.Hostname, podcastID, region, locale, randomHexID(8))
-	}
-	userPart := fmt.Sprintf("%s,%s,%s", a.cfg.Email, region, locale)
-	return fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
-		a.cfg.Protocol, url.UserPassword(userPart, a.cfg.Password).String(), a.cfg.Hostname, podcastID, randomHexID(8))
+	return fmt.Sprintf("%s://%s/feed/%s.xml?region=%s&locale=%s&random=%s",
+		a.cfg.Protocol, a.cfg.Hostname, podcastID, region, locale, randomHexID(8))
 }
 
 func randomHexID(length int) string {
