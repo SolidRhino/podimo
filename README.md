@@ -34,20 +34,20 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 🩺 **Health endpoint** — A lightweight `/health` probe for Docker and Kubernetes orchestration.
 
-🐍 **Python 3.12** — Updated runtime with modern dependencies and security patches.
+🚀 **Single static binary** — Rewritten in Go, compiles to one executable with no runtime dependencies.
 
-🧪 **CI/CD** — GitHub Actions run tests on Python 3.10/3.11/3.12 and publish Docker images automatically.
+🧪 **CI/CD** — GitHub Actions run tests and publish Docker images automatically.
 
 ---
 
 ## Installation
 
-> Requires Python 3.10+
+> Requires Go 1.23+ (or use Docker below)
 
 ```sh
 git clone https://github.com/SolidRhino/podimo
 cd podimo
-make update
+make build
 make install
 make start
 ```
@@ -66,7 +66,7 @@ A full list of options is in [.env.example](.env.example).
 
 ## Docker
 
-The fastest way to run this tool. No Python or dependencies needed.
+The fastest way to run this tool. No build tools needed.
 
 ### Quick start (Docker CLI)
 
@@ -127,7 +127,7 @@ docker compose up -d
 | File | Use when | Why |
 |------|----------|-----|
 | `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/src/cache` volume path, `LOCAL_CREDENTIALS=true` |
-| `.env.example` | Local Python install | Generic template — uncomment the lines you need |
+| `.env.example` | Local Go install | Generic template — uncomment the lines you need |
 
 See [.env.docker](.env.docker) for Docker-specific defaults, or [.env.example](.env.example) for the full option reference.
 
@@ -225,9 +225,8 @@ Nothing is ever logged.
 ### Running tests
 
 ```sh
-pip install -r requirements.txt
-pytest -v
-mypy podimo/ main.py
+make test      # Run Go tests with race detection
+make lint      # Run go vet and gofmt checks
 ```
 
 ### Local CI with `act`
@@ -246,11 +245,14 @@ act -j test -W .github/workflows/test.yml
 
 ```
 podimo/
-  client.py    → GraphQL client (auth, search, episodes)
-  config.py    → Environment variables & constants
-  cache.py     → diskcache-backed caches
-  utils.py     → Header generation, helpers
-tests/         → pytest + pytest-asyncio (77 tests)
+  cache.go      → File-based JSON cache with TTL
+  client.go     → GraphQL client (auth, search, episodes)
+  graphql.go    → Thin GraphQL HTTP wrapper
+  rss.go        → iTunes RSS generation
+  *_test.go     → Go test suite
+templates/
+  index.html    → Web form (embedded via //go:embed)
+  feed_location.html → Result page with QR code
 ```
 
 ---
@@ -263,7 +265,7 @@ Copyright 2022-2023 Thijs Raymakers
 Licensed under the EUPL, Version 1.2 or – as soon they
 will be approved by the European Commission - subsequent
 versions of the EUPL (the "Licence");
-You may not use this work except in compliance with the
+You may use this work except in compliance with the
 Licence.
 
 https://joinup.ec.europa.eu/software/page/eupl
