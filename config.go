@@ -47,6 +47,43 @@ type Region struct {
 func LoadConfig() (*Config, error) {
 	_ = godotenv.Load(".env")
 
+	debug, err := parseBool(os.Getenv("DEBUG"))
+	if err != nil {
+		return nil, fmt.Errorf("DEBUG: %w", err)
+	}
+	localCreds, err := parseBool(os.Getenv("LOCAL_CREDENTIALS"))
+	if err != nil {
+		return nil, fmt.Errorf("LOCAL_CREDENTIALS: %w", err)
+	}
+	storeTokens, err := parseBool(getEnv("STORE_TOKENS_ON_DISK", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("STORE_TOKENS_ON_DISK: %w", err)
+	}
+	tokenCacheTime, err := parseDuration(os.Getenv("TOKEN_CACHE_TIME"), 5*24*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("TOKEN_CACHE_TIME: %w", err)
+	}
+	podcastCacheTime, err := parseDuration(os.Getenv("PODCAST_CACHE_TIME"), 6*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("PODCAST_CACHE_TIME: %w", err)
+	}
+	headCacheTime, err := parseDuration(os.Getenv("HEAD_CACHE_TIME"), 7*24*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("HEAD_CACHE_TIME: %w", err)
+	}
+	publicFeeds, err := parseBool(os.Getenv("PUBLIC_FEEDS"))
+	if err != nil {
+		return nil, fmt.Errorf("PUBLIC_FEEDS: %w", err)
+	}
+	videoEnabled, err := parseBool(os.Getenv("ENABLE_VIDEO"))
+	if err != nil {
+		return nil, fmt.Errorf("ENABLE_VIDEO: %w", err)
+	}
+	videoCheckEnabled, err := parseBool(os.Getenv("ENABLE_VIDEO_CHECK"))
+	if err != nil {
+		return nil, fmt.Errorf("ENABLE_VIDEO_CHECK: %w", err)
+	}
+
 	cfg := &Config{
 		Hostname:          getEnv("PODIMO_HOSTNAME", "localhost:12104"),
 		BindHost:          getEnv("PODIMO_BIND_HOST", "127.0.0.1:12104"),
@@ -56,18 +93,18 @@ func LoadConfig() (*Config, error) {
 		ScraperAPI:        os.Getenv("SCRAPER_API"),
 		CacheDir:          getEnv("CACHE_DIR", "./cache"),
 		BlockListFile:     getEnv("BLOCK_LIST_FILE", "./.block-list"),
-		Debug:             parseBool(os.Getenv("DEBUG")),
-		LocalCredentials:  parseBool(os.Getenv("LOCAL_CREDENTIALS")),
+		Debug:             debug,
+		LocalCredentials:  localCreds,
 		Email:             os.Getenv("PODIMO_EMAIL"),
 		Password:          os.Getenv("PODIMO_PASSWORD"),
 		GraphQLURL:        "https://podimo.com/graphql",
-		StoreTokensOnDisk: parseBool(getEnv("STORE_TOKENS_ON_DISK", "true")),
-		TokenCacheTime:    parseDuration(os.Getenv("TOKEN_CACHE_TIME"), 5*24*time.Hour),
-		PodcastCacheTime:  parseDuration(os.Getenv("PODCAST_CACHE_TIME"), 6*time.Hour),
-		HeadCacheTime:     parseDuration(os.Getenv("HEAD_CACHE_TIME"), 7*24*time.Hour),
-		PublicFeeds:       parseBool(os.Getenv("PUBLIC_FEEDS")),
-		VideoEnabled:      parseBool(os.Getenv("ENABLE_VIDEO")),
-		VideoCheckEnabled: parseBool(os.Getenv("ENABLE_VIDEO_CHECK")),
+		StoreTokensOnDisk: storeTokens,
+		TokenCacheTime:    tokenCacheTime,
+		PodcastCacheTime:  podcastCacheTime,
+		HeadCacheTime:     headCacheTime,
+		PublicFeeds:       publicFeeds,
+		VideoEnabled:      videoEnabled,
+		VideoCheckEnabled: videoCheckEnabled,
 		VideoTitleSuffix:  os.Getenv("VIDEO_TITLE_SUFFIX"),
 		Locales: []string{
 			"nl-NL", "de-DE", "da-DK", "es-ES", "en-US",
@@ -124,23 +161,30 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func parseBool(v string) bool {
+func parseBool(v string) (bool, error) {
+	v = strings.TrimSpace(v)
 	switch strings.ToLower(v) {
 	case "true", "1", "t", "y", "yes":
-		return true
+		return true, nil
+	case "false", "0", "f", "n", "no", "":
+		return false, nil
 	default:
-		return false
+		return false, fmt.Errorf("invalid boolean value %q", v)
 	}
 }
 
-func parseDuration(v string, fallback time.Duration) time.Duration {
+func parseDuration(v string, fallback time.Duration) (time.Duration, error) {
+	v = strings.TrimSpace(v)
 	if v == "" {
-		return fallback
+		return fallback, nil
 	}
 	if seconds, err := strconv.Atoi(v); err == nil {
-		return time.Duration(seconds) * time.Second
+		return time.Duration(seconds) * time.Second, nil
 	}
-	return fallback
+	if d, err := time.ParseDuration(v); err == nil {
+		return d, nil
+	}
+	return fallback, fmt.Errorf("invalid duration value %q", v)
 }
 
 func (c *Config) isValidRegion(region string) bool {
