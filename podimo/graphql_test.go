@@ -1,10 +1,12 @@
 package podimo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +66,25 @@ func TestGraphQLClient_Query_Success(t *testing.T) {
 	title, _ := result["podcast"].(map[string]interface{})["title"].(string)
 	if title != "Hello" {
 		t.Fatalf("unexpected title: %s", title)
+	}
+}
+
+func TestGraphQLClient_Query_LargeResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte("{\"data\":{"))
+		w.Write(bytes.Repeat([]byte("x"), 11*1024*1024))
+		w.Write([]byte("}}"))
+	}))
+	defer srv.Close()
+	c := NewGraphQLClient(srv.URL, srv.Client())
+	var result map[string]interface{}
+	err := c.Query(context.Background(), nil, "query {}", nil, &result)
+	if err == nil {
+		t.Fatal("expected error for large response")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected exceeds error, got %v", err)
 	}
 }

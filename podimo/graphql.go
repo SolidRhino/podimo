@@ -31,14 +31,14 @@ type gqlRequest struct {
 
 type gqlResponse struct {
 	Data   json.RawMessage `json:"data"`
-	Errors []gqlError      `json:"errors"`
+	Errors []GQLError      `json:"errors"`
 }
 
-type gqlError struct {
+type GQLError struct {
 	Message string `json:"message"`
 }
 
-func (e gqlError) Error() string { return "graphql: " + e.Message }
+func (e GQLError) Error() string { return "graphql: " + e.Message }
 
 func (c *GraphQLClient) Query(ctx context.Context, headers map[string]string, query string, variables map[string]interface{}, resp interface{}) error {
 	body := gqlRequest{Query: query, Variables: variables}
@@ -63,9 +63,13 @@ func (c *GraphQLClient) Query(ctx context.Context, headers map[string]string, qu
 	}
 	defer res.Body.Close()
 
-	raw, err := io.ReadAll(res.Body)
+	const maxResponseSize = 10 * 1024 * 1024 // 10MB
+	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseSize+1))
 	if err != nil {
 		return fmt.Errorf("read response body: %w", err)
+	}
+	if len(raw) > maxResponseSize {
+		return fmt.Errorf("graphql response exceeds %d bytes", maxResponseSize)
 	}
 
 	if res.StatusCode != http.StatusOK {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -302,8 +303,12 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 			if _, ok := err.(*AuthenticationError); ok {
 				return nil, err
 			}
-			if strings.Contains(err.Error(), "Unauthorized") || strings.Contains(err.Error(), "unauthenticated") {
-				return nil, NewAuthenticationError(err.Error())
+			var gqlErr GQLError
+			if errors.As(err, &gqlErr) {
+				msg := strings.ToLower(gqlErr.Message)
+				if strings.Contains(msg, "unauthorized") || strings.Contains(msg, "unauthenticated") || strings.Contains(msg, "not authorized") {
+					return nil, NewAuthenticationError(gqlErr.Message)
+				}
 			}
 			return nil, NewPodcastNotFoundError(fmt.Sprintf("Podcast %s not found or empty response", podcastID))
 		}
