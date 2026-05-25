@@ -42,7 +42,7 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 ## Installation
 
-> Requires Go 1.23+ (or use Docker below)
+> Requires Go 1.26+ (or use Docker below)
 
 ```sh
 git clone https://github.com/SolidRhino/podimo

@@ -20,7 +20,7 @@ Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only wher
 
 **Podimo to RSS** is a self-hosted Go web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
 
-- **Language:** Go 1.23+
+- **Language:** Go 1.26+
 - **Framework:** Go standard library `net/http` + `chi` router
 - **API:** Podimo GraphQL (`https://podimo.com/graphql`)
 - **Auth:** HTTP Basic Auth (credentials embedded in URL) or local credentials mode

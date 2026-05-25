@@ -1,6 +1,6 @@
 module github.com/SolidRhino/podimo-rss
 
-go 1.23
+go 1.26
 
 require (
 	github.com/eduncan911/podcast v1.4.2
