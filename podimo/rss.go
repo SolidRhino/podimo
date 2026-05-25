@@ -68,12 +68,18 @@ func PodcastsToRss(ctx context.Context, podcastID string, data map[string]interf
 
 	// Process episodes in chunks of 5 with parallel HEAD requests
 	for _, chunk := range chunks(episodes, 5) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		items := make([]podcast.Item, len(chunk))
 		var wg sync.WaitGroup
 		for i, ep := range chunk {
 			wg.Add(1)
 			go func(idx int, raw interface{}) {
 				defer wg.Done()
+				if ctx.Err() != nil {
+					return
+				}
 				episode, ok := raw.(map[string]interface{})
 				if !ok {
 					return
@@ -242,7 +248,11 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 		resp, err := client.Do(req)
 		if err != nil {
 			if attempt < retries-1 {
-				time.Sleep(1 * time.Second)
+				select {
+				case <-ctx.Done():
+					return "0", "audio/mpeg", ctx.Err()
+				case <-time.After(1 * time.Second):
+				}
 				continue
 			}
 			return "0", "audio/mpeg", err

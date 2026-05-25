@@ -199,3 +199,66 @@ func TestPodcastsToRss_Basic(t *testing.T) {
 		t.Fatalf("expected enclosure")
 	}
 }
+
+func TestPodcastsToRss_ContextCancel(t *testing.T) {
+	data := map[string]interface{}{
+		"podcast": map[string]interface{}{
+			"title":       "Test",
+			"description": "Desc",
+			"authorName":  "Author",
+			"language":    "en",
+			"images": map[string]interface{}{
+				"coverImageUrl": "http://cover.jpg",
+			},
+		},
+		"episodes": []interface{}{
+			map[string]interface{}{
+				"id":              "ep1",
+				"title":           "Episode 1",
+				"description":     "Desc 1",
+				"publishDatetime": "2023-01-01T00:00:00Z",
+				"audio": map[string]interface{}{
+					"url":      "http://audio.mp3",
+					"duration": 60.0,
+				},
+			},
+		},
+	}
+	dir := t.TempDir()
+	hc, _ := NewFileCache(dir)
+	hc.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := PodcastsToRss(ctx, "12345678-1234-1234-1234-123456789abc", data, "en-US", hc, false, time.Hour, nil, nil)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestURLHeadInfo_ContextCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Fatalf("expected HEAD, got %s", r.Method)
+		}
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	client := srv.Client()
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	client.Transport = &failNTimesTransport{n: 5, base: base}
+
+	dir := t.TempDir()
+	hc, _ := NewFileCache(dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	_, _, err := URLHeadInfo(ctx, client, "cancel-ep", srv.URL, nil, hc, time.Hour)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
