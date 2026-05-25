@@ -11,8 +11,7 @@ import (
 
 type FileCache struct {
 	dir      string
-	keyLocks map[string]*sync.Mutex
-	locksMu  sync.Mutex
+	keyLocks *BoundedMap[string, *sync.Mutex]
 }
 
 type cacheEntry struct {
@@ -24,18 +23,18 @@ func NewFileCache(dir string) (*FileCache, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
-	return &FileCache{dir: dir, keyLocks: make(map[string]*sync.Mutex)}, nil
+	return &FileCache{
+		dir: dir,
+		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
+			MaxSize: 0, // unbounded to avoid evicting live mutexes
+		}),
+	}, nil
 }
 
 func (c *FileCache) getKeyLock(key string) *sync.Mutex {
-	c.locksMu.Lock()
-	defer c.locksMu.Unlock()
-	if l, ok := c.keyLocks[key]; ok {
-		return l
-	}
-	l := &sync.Mutex{}
-	c.keyLocks[key] = l
-	return l
+	return c.keyLocks.GetOrSet(key, func() *sync.Mutex {
+		return &sync.Mutex{}
+	}, 0)
 }
 
 func (c *FileCache) Get(key string) (interface{}, bool) {

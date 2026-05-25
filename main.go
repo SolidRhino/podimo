@@ -28,6 +28,12 @@ var templatesFS embed.FS
 
 var podcastIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+var credentialPathPattern = regexp.MustCompile(`(?i)^(/feed/[^/]+/)[^/]+(/[^/]+\.xml.*)$`)
+
+func redactURLString(raw string) string {
+	return credentialPathPattern.ReplaceAllString(raw, "${1}REDACTED${2}")
+}
+
 type App struct {
 	cfg          *Config
 	logger       *slog.Logger
@@ -37,20 +43,23 @@ type App struct {
 	tokenCache   *podimo.FileCache
 	podcastCache *podimo.FileCache
 	headCache    *podimo.FileCache
-	clients      map[string]*http.Client
-	mu           sync.RWMutex
+	clients      *podimo.BoundedMap[string, *http.Client]
 }
 
 type RateLimiter struct {
-	mu     sync.RWMutex
-	ips    map[string][]time.Time
+	mu     sync.Mutex
+	ips    *podimo.BoundedMap[string, []time.Time]
 	window time.Duration
 	max    int
 }
 
 func NewRateLimiter(window time.Duration, max int) *RateLimiter {
 	return &RateLimiter{
-		ips:    make(map[string][]time.Time),
+		ips: podimo.NewBoundedMap[string, []time.Time](podimo.BoundedMapOptions{
+			MaxSize:         10000,
+			TTL:             window,
+			CleanupInterval: window,
+		}),
 		window: window,
 		max:    max,
 	}
@@ -61,8 +70,10 @@ func (r *RateLimiter) Allow(ip string) bool {
 	defer r.mu.Unlock()
 
 	now := time.Now()
-	reqs := r.ips[ip]
-
+	var reqs []time.Time
+	if v, ok := r.ips.Get(ip); ok {
+		reqs = v
+	}
 	var valid []time.Time
 	for _, t := range reqs {
 		if now.Sub(t) < r.window {
@@ -70,8 +81,7 @@ func (r *RateLimiter) Allow(ip string) bool {
 		}
 	}
 	valid = append(valid, now)
-	r.ips[ip] = valid
-
+	r.ips.Set(ip, valid, r.window)
 	return len(valid) <= r.max
 }
 
@@ -138,7 +148,11 @@ func main() {
 		tokenCache:   tokenCache,
 		podcastCache: podcastCache,
 		headCache:    headCache,
-		clients:      make(map[string]*http.Client),
+		clients: podimo.NewBoundedMap[string, *http.Client](podimo.BoundedMapOptions{
+			MaxSize:         100,
+			TTL:             cfg.TokenCacheTime,
+			CleanupInterval: 24 * time.Hour,
+		}),
 	}
 
 	router := app.setupRoutes()
@@ -146,8 +160,13 @@ func main() {
 	logger.Info("Starting server", "bind", cfg.BindHost)
 
 	server := &http.Server{
-		Addr:    cfg.BindHost,
-		Handler: router,
+		Addr:              cfg.BindHost,
+		Handler:           router,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	if err := server.ListenAndServe(); err != nil {
@@ -174,9 +193,9 @@ func (a *App) setupRoutes() chi.Router {
 func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		a.logger.Debug("Request started", "method", r.Method, "url", r.URL.String(), "ip", r.RemoteAddr, "ua", r.UserAgent())
+		a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
 		next.ServeHTTP(w, r)
-		a.logger.Debug("Request completed", "method", r.Method, "url", r.URL.String(), "duration", time.Since(start).Seconds())
+		a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
 	})
 }
 
@@ -371,6 +390,10 @@ func (a *App) handleFeed(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
 			return
 		}
+		if _, ok := err.(*podimo.AuthenticationError); ok {
+			authenticate(w)
+			return
+		}
 		a.logger.Error("Podcast fetch error", "error", err)
 		http.Error(w, "Something went wrong while fetching the podcasts", http.StatusInternalServerError)
 		return
@@ -436,6 +459,10 @@ func (a *App) handleFeedPath(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
 			return
 		}
+		if _, ok := err.(*podimo.AuthenticationError); ok {
+			authenticate(w)
+			return
+		}
 		a.logger.Error("Podcast fetch error", "error", err)
 		http.Error(w, "Something went wrong while fetching the podcasts", http.StatusInternalServerError)
 		return
@@ -461,14 +488,9 @@ func (a *App) graphqlEndpoint() string {
 }
 
 func (a *App) getHTTPClient(key string) *http.Client {
-	a.mu.RLock()
-	client, ok := a.clients[key]
-	a.mu.RUnlock()
-	if ok {
+	if client, ok := a.clients.Get(key); ok {
 		return client
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	transport := &http.Transport{}
 	if a.cfg.ZenRowsAPI != "" {
@@ -481,8 +503,8 @@ func (a *App) getHTTPClient(key string) *http.Client {
 	}
 
 	jar, _ := cookiejar.New(nil)
-	client = &http.Client{Transport: transport, Jar: jar, Timeout: 30 * time.Second}
-	a.clients[key] = client
+	client := &http.Client{Transport: transport, Jar: jar, Timeout: 30 * time.Second}
+	a.clients.Set(key, client, a.cfg.TokenCacheTime)
 	return client
 }
 

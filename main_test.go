@@ -45,17 +45,25 @@ func setupTestApp(t *testing.T) *App {
 		t.Fatalf("parse feed template: %v", err)
 	}
 
-	return &App{
+	app := &App{
 		cfg:          cfg,
 		logger:       logger,
 		limiter:      NewRateLimiter(10*time.Second, 8),
 		tokenCache:   tokenCache,
 		podcastCache: podcastCache,
 		headCache:    headCache,
-		clients:      make(map[string]*http.Client),
-		indexTmpl:    indexTmpl,
-		feedTmpl:     feedTmpl,
+		clients: podimo.NewBoundedMap[string, *http.Client](podimo.BoundedMapOptions{
+			MaxSize: 100,
+			TTL:     time.Hour,
+		}),
+		indexTmpl: indexTmpl,
+		feedTmpl:  feedTmpl,
 	}
+	t.Cleanup(func() {
+		app.limiter.ips.Stop()
+		app.clients.Stop()
+	})
+	return app
 }
 
 func TestHealthHandler(t *testing.T) {
@@ -341,6 +349,80 @@ func TestHandleSubscriptions(t *testing.T) {
 	}
 }
 
+func TestHandleFeed_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []map[string]interface{}{
+				{"message": "Unauthorized"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	key := podimo.TokenKey("u", "p")
+	app.tokenCache.Set(key, "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleFeedPath_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []map[string]interface{}{
+				{"message": "unauthenticated"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	app := setupTestAppWithMock(t, srv.URL)
+	key := podimo.TokenKey("user", "pass")
+	app.tokenCache.Set(key, "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/feed/user/pass/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLoggingMiddleware_Redaction(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml", "/feed/u/REDACTED/12345678-1234-1234-1234-123456789abc.xml"},
+		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml?region=nl", "/feed/u/REDACTED/12345678-1234-1234-1234-123456789abc.xml?region=nl"},
+		{"/search?q=test", "/search?q=test"},
+		{"/health", "/health"},
+	}
+
+	for _, c := range cases {
+		got := redactURLString(c.input)
+		if got != c.expected {
+			t.Fatalf("redactURLString(%q) = %q; want %q", c.input, got, c.expected)
+		}
+	}
+}
+
 func TestHandleIndexPost(t *testing.T) {
 	app := setupTestApp(t)
 	app.cfg.LocalCredentials = true
@@ -364,5 +446,49 @@ func TestHandleIndexPost(t *testing.T) {
 	}
 	if !strings.Contains(body, "/feed/") {
 		t.Fatalf("expected feed URL in response, got %s", body)
+	}
+}
+
+func TestLoadConfig_InvalidBool(t *testing.T) {
+	t.Setenv("DEBUG", "maybe")
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected error for invalid DEBUG value")
+	}
+	if !strings.Contains(err.Error(), "DEBUG") {
+		t.Fatalf("expected DEBUG in error, got %v", err)
+	}
+}
+
+func TestLoadConfig_InvalidDuration(t *testing.T) {
+	t.Setenv("TOKEN_CACHE_TIME", "forever")
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected error for invalid TOKEN_CACHE_TIME value")
+	}
+	if !strings.Contains(err.Error(), "TOKEN_CACHE_TIME") {
+		t.Fatalf("expected TOKEN_CACHE_TIME in error, got %v", err)
+	}
+}
+
+func TestLoadConfig_TrimmedBool(t *testing.T) {
+	t.Setenv("DEBUG", " true ")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Debug {
+		t.Fatal("expected true after trimming")
+	}
+}
+
+func TestLoadConfig_TrimmedDuration(t *testing.T) {
+	t.Setenv("TOKEN_CACHE_TIME", " 3600 ")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TokenCacheTime != 3600*time.Second {
+		t.Fatalf("expected 3600s, got %v", cfg.TokenCacheTime)
 	}
 }
