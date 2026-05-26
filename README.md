@@ -47,9 +47,9 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 ```sh
 git clone https://github.com/SolidRhino/podimo
 cd podimo
-make build
-make install
-make start
+just build
+just install
+just start
 ```
 
 Visit [http://localhost:12104](http://localhost:12104) — you should see the interface.
@@ -57,7 +57,7 @@ Visit [http://localhost:12104](http://localhost:12104) — you should see the in
 To make it accessible from other machines or adjust settings:
 
 ```sh
-make config
+just config
 ```
 
 A full list of options is in [.env.example](.env.example).
@@ -175,7 +175,7 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 
 ## Configuration
 
-All configuration is done via environment variables or the `.env` file. Run `make config` to edit it interactively.
+All configuration is done via environment variables or the `.env` file. Run `just config` to edit it interactively.
 
 Key settings:
 
@@ -224,8 +224,8 @@ Nothing is ever logged.
 ### Running tests
 
 ```sh
-make test      # Run Go tests with race detection
-make lint      # Run go vet and gofmt checks
+just test      # Run Go tests with race detection
+just lint      # Run go vet and gofmt checks
 ```
 
 ### Local CI with `act`
