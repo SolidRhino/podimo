@@ -24,7 +24,9 @@ import (
 )
 
 //go:embed templates/*
+//go:embed static/*
 var templatesFS embed.FS
+var staticFS embed.FS
 
 var podcastIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -179,6 +181,8 @@ func (a *App) setupRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Use(a.loggingMiddleware)
 	r.NotFound(a.notFoundHandler)
+
+	r.Handle("/static/*", http.FileServer(http.FS(staticFS)))
 
 	r.Get("/health", a.handleHealth)
 	r.With(a.rateLimitMiddleware).Get("/search", a.handleSearch)

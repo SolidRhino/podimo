@@ -1,93 +1,14 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Podimo-to-RSS converter</title>
   <meta name="robots" content="noindex, nofollow">
-  <style>
-    html {
-      max-width: 80ch;
-      padding: calc(1vmin + .5rem);
-      margin-inline: auto;
-      font-family: system-ui;
-      background-color: #eeeeee;
-    }
-    body :not(:is(h1, h2, h3, h4, h5, h6)) {
-      line-height: 1.75;
-    }
-    form {
-      padding-top: 1rem;
-    }
-    *:not(:is(h1, h2, h3, h4, h5, h6)) {
-      font-size: clamp(1rem, 0.909rem + 0.45vmin, 1.25rem);
-    }
-    select, button, input {
-      border: 0;
-      width: 100%;
-      padding: 0.5rem;
-      margin-bottom: 1rem;
-      font-size: 1rem;
-      background-color: #fff;
-      color: #000;
-    }
-    input[type=submit] {
-      margin: 1rem 0 2rem 0;
-    }
-    form:invalid input[type=submit] {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-    input:invalid {
-      background: url("data:image/svg+xml,%3Csvg%20width%3D%221.0625em%22%20id%3D%22triangle%22%20height%3D%221em%22%20viewBox%3D%220%200%2017%2016%22%20fill%3D%22black%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M8.982%201.566a1.13%201.13%200%200%200-1.96%200L.165%2013.233c-.457.778.091%201.767.98%201.767h13.713c.889%200%201.438-.99.98-1.767L8.982%201.566zM8%205a.905.905%200%200%200-.9.995l.35%203.507a.552.552%200%200%200%201.1%200l.35-3.507A.905.905%200%200%200%208%205zm.002%206a1%201%200%201%200%200%202%201%201%200%200%200%200-2z%22%20%2F%3E%3C%2Fsvg%3E%0A") no-repeat 95% 50% #ffffff;
-      background-size: 1.5rem;
-    }
-    details {
-      padding: 1rem 0;
-      cursor: pointer;
-    }
-    details>summary {
-      padding: 1rem;
-      background-color: #cccccc;
-    }
-    footer {
-      margin: 1rem 0 2rem 0;
-      background-color: #cccccc;
-      padding: 1rem;
-    }
-    details>ol {
-      margin: 0;
-      background-color: #e6e6e6;
-      padding: 1rem 2rem 1rem 3rem;
-    }
-    #triangle {
-      display: none;
-    }
-    @media (prefers-color-scheme: dark) {
-      html {
-        color: #fff;
-        background-color: #000;
-      }
-      details>summary {
-        background-color: #262626;
-      }
-      details>ol {
-        background-color: #404040;
-      }
-      footer {
-        background-color: #262626;
-      }
-      a {
-        color: #eee;
-      }
-      select, button, input {
-        background-color: #262626;
-        color: #fff;
-      }
-      input:invalid {
-        background: url("data:image/svg+xml,%3Csvg%20width%3D%221.0625em%22%20id%3D%22triangle%22%20height%3D%221em%22%20viewBox%3D%220%200%2017%2016%22%20fill%3D%22white%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20d%3D%22M8.982%201.566a1.13%201.13%200%200%200-1.96%200L.165%2013.233c-.457.778.091%201.767.98%201.767h13.713c.889%200%201.438-.99.98-1.767L8.982%201.566zM8%205a.905.905%200%200%200-.9.995l.35%203.507a.552.552%200%200%200%201.1%200l.35-3.507A.905.905%200%200%200%208%205zm.002%206a1%201%200%201%200%200%202%201%201%200%200%200%200-2z%22%20%2F%3E%3C%2Fsvg%3E%0A") no-repeat 95% 50% #404040;
-        background-size: 1.5rem;
-      }
-    }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <h1>Podimo-to-RSS converter</h1>
@@ -108,13 +29,13 @@
   </details>
 
   {{ if .Error }}
-  <u><h2>Error: {{ .Error }}</h2></u>
+  <h2 class="error-title">Error: {{ .Error }}</h2>
   {{ end }}
 
   {{ if .NeedCredentials }}
-  <div style="background:#f8d7da; color:#721c24; padding:1rem; margin-bottom:1rem;">
+  <div class="banner-warning">
     <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
-    (e.g. <code>https://your-email:your-password@...</code>). This URL will be saved in your podcast app,
+    (e.g. <code>https://your-email:your-password@…</code>). This URL will be saved in your podcast app,
     browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
     for a single-user instance instead.
   </div>
@@ -122,35 +43,34 @@
 
   <form action="./" method="post">
     {{ if .NeedCredentials }}
-    <label for="email">Your Podimo email address</label><br />
-    <input type="email" required placeholder="Podimo email address" name="email" id="email"><br />
+    <label for="email">Your Podimo email address</label>
+    <input type="email" required placeholder="Podimo email address" name="email" id="email">
 
-    <label for="password">Your Podimo password</label><br />
-    <input type="password" required placeholder="Podimo password" name="password" id="password"><br />
+    <label for="password">Your Podimo password</label>
+    <input type="password" required placeholder="Podimo password" name="password" id="password">
     {{ end }}
 
-    <h2>🔍 Search for podcast</h2>
-    <label for="search_query">Search by name</label><br />
+    <h2>🔍 Search for a podcast</h2>
+    <label for="search_query">Search by name</label>
     <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
-    <button type="button" id="searchBtn">Search</button>
-    <div id="searchResults" style="margin-top:0.5rem;"></div>
+    <button type="button" id="searchBtn" class="btn-secondary">Search</button>
+    <div id="searchResults" class="search-results"></div>
 
-    <hr style="margin:1.5rem 0;" />
+    <hr />
 
     <h2>📻 Or use your Podcast ID</h2>
-    <label for="podcast_id">Podcast ID or URL</label><br />
-    <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-...</code>) or just the ID.</small><br />
-    <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"><br />
+    <label for="podcast_id">Podcast ID or URL</label>
+    <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-…</code>) or just the ID.</small>
+    <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}">
 
-    <label for="region">Region</label><br />
+    <label for="region">Region</label>
     <select name="region" id="region">
       {{ range .Regions }}
       <option value="{{ .Code }}">{{ .Name }}</option>
       {{ end }}
     </select>
-    <br />
 
-    <label for="locale">Locale</label><br />
+    <label for="locale">Locale</label>
     <select name="locale" id="locale">
       {{ range .Locales }}
       <option>{{ . }}</option>
@@ -158,7 +78,7 @@
     </select>
 
     <footer>
-      Licensed under the EUPL-1.2 license - Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
+      Licensed under the EUPL-1.2 license — Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
       If you find this useful, consider <a href="https://www.buymeacoffee.com/thijsr">buying the original author a coffee ☕</a>
     </footer>
 
@@ -183,7 +103,7 @@
       const query = searchInput.value.trim();
       if (query.length < 2) return;
 
-      resultsDiv.innerHTML = '<em>Searching...</em>';
+      resultsDiv.innerHTML = '<em class="search-msg">Searching…</em>';
 
       const url = new URL(window.location.origin + '/search');
       url.searchParams.set('q', query);
@@ -201,29 +121,35 @@
         const response = await fetch(url.toString());
         if (!response.ok) {
           const text = await response.text();
-          resultsDiv.innerHTML = '<span style="color:red">Error: ' + text + '</span>';
+          resultsDiv.innerHTML = '<span class="search-err">Error: ' + text + '</span>';
           return;
         }
         const data = await response.json();
         if (!data.results || data.results.length === 0) {
-          resultsDiv.innerHTML = '<em>No podcasts found.</em>';
+          resultsDiv.innerHTML = '<em class="search-msg">No podcasts found.</em>';
           return;
         }
-        let html = '<ul style="list-style:none;padding:0;margin:0;">';
+        let html = '<ul>';
         for (const podcast of data.results) {
-          html += '<li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;border-bottom:1px solid #eee;cursor:pointer;" onclick="selectPodcast(\'' + podcast.id + '\')">';
+          html += '<li onclick="selectPodcast(\'' + podcast.id + '\')">';
           if (podcast.coverImageUrl) {
-            html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48" style="border-radius:4px;object-fit:cover;">';
+            html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48">';
           }
-          html += '<div><strong>' + podcast.title + '</strong>';
-          if (podcast.authorName) html += '<br><small>' + podcast.authorName + '</small>';
+          html += '<div><strong>' + encodeHtml(podcast.title) + '</strong>';
+          if (podcast.authorName) html += '<br><small>' + encodeHtml(podcast.authorName) + '</small>';
           html += '</div></li>';
         }
         html += '</ul>';
         resultsDiv.innerHTML = html;
       } catch (err) {
-        resultsDiv.innerHTML = '<span style="color:red">Search failed: ' + err.message + '</span>';
+        resultsDiv.innerHTML = '<span class="search-err">Search failed: ' + err.message + '</span>';
       }
+    }
+
+    function encodeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
 
     searchBtn.addEventListener('click', doSearch);
