@@ -19,9 +19,17 @@ build:
 test:
     {{go_cmd}} test ./... -v
 
-# Build and run the server locally
+# Build and run the server locally (uses ./config.yaml if found)
 run: build
-    ./{{binary}}
+    if test -f "config.yaml"; then
+        ./{{binary}} --config=config.yaml
+    else
+        ./{{binary}}
+    fi
+
+# Run with a custom config file path, e.g. `just run-config /etc/podimo-rss/config.yaml`
+run-config configfile: build
+    ./{{binary}} --config={{configfile}}
 
 # Run go vet and gofmt
 lint:
@@ -48,13 +56,25 @@ docker-build:
 # Build and run the Docker container (detached)
 docker-run: docker-build
     docker rm -f {{docker_container}} 2>/dev/null || true
-    docker run -d \
-        --name {{docker_container}} \
-        --restart unless-stopped \
-        -e PODIMO_BIND_HOST=0.0.0.0:12104 \
-        -p 12104:12104 \
-        -v "$PWD/cache:/tmp/podimo-rss-cache" \
-        {{docker_image}}:latest
+    # Mount config.yaml read-only if it exists
+    if test -f "$PWD/config.yaml"; then
+        docker run -d \
+            --name {{docker_container}} \
+            --restart unless-stopped \
+            -e PODIMO_BIND_HOST=0.0.0.0:12104 \
+            -p 12104:12104 \
+            -v "$PWD/cache:/tmp/podimo-rss-cache" \
+            -v "$PWD/config.yaml:/src/config.yaml:ro" \
+            {{docker_image}}:latest
+    else
+        docker run -d \
+            --name {{docker_container}} \
+            --restart unless-stopped \
+            -e PODIMO_BIND_HOST=0.0.0.0:12104 \
+            -p 12104:12104 \
+            -v "$PWD/cache:/tmp/podimo-rss-cache" \
+            {{docker_image}}:latest
+    fi
     echo "Container '{{docker_container}}' started on http://localhost:12104"
     echo "View logs: docker logs -f {{docker_container}}"
 
@@ -69,12 +89,16 @@ docker-logs:
 
 # --- Configuration ---
 
+# Create config.yaml from config.example.yaml if it doesn't exist
+init-config:
+    test -f config.yaml || cp config.example.yaml config.yaml
+
 # Create .env from .env.example if it doesn't exist
 init-env:
     test -f .env || cp .env.example .env
 
-# Edit configuration options interactively
-config: init-env
+# Edit configuration options interactively (YAML preferred)
+config: init-config
     #!/usr/bin/env bash
     set -eu -o pipefail
     if ! command -v "${EDITOR:-nano}" >/dev/null 2>&1; then
@@ -84,8 +108,8 @@ config: init-env
         echo "Unable to find editor. Set EDITOR or install nano."
         exit 1
     fi
-    read -e -p "You will open the config file .env in the editor $EDITOR. Continue? [Y/n]> "
-    [[ "$REPLY" != [nN]* ]] && "$EDITOR" .env || exit 1
+    read -e -p "You will open the config file config.yaml in the editor $EDITOR. Continue? [Y/n]> "
+    [[ "$REPLY" != [nN]* ]] && "$EDITOR" config.yaml || exit 1
     echo 'Make sure to restart the service with "just restart" to apply the changes!'
 
 # --- Legacy systemd targets ---

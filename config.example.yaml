@@ -1,0 +1,38 @@
+# Podimo to RSS — YAML configuration reference
+# Place this file as `config.yaml` in the working directory,
+# or at `/etc/podimo-rss/config.yaml`.
+# Environment variables prefixed with `PODIMO_` override these values.
+
+# Server settings
+hostname: "localhost:12104"
+bind_host: "127.0.0.1:12104"
+protocol: "http"
+
+# Local credentials (single-user mode; read README before enabling)
+local_credentials: false
+email: ""
+password: ""
+
+# Public feeds — removes itunes:block so podcast catalogues may index them
+public_feeds: false
+
+# Proxy / scraper settings
+http_proxy: ""
+zenrows_api: ""
+scraper_api: ""
+
+# Caching
+cache_dir: "./cache"
+block_list_file: "./.block-list"
+store_tokens_on_disk: true
+token_cache_time: "432000s"   # 5 days
+podcast_cache_time: "21600s"  # 6 hours
+head_cache_time: "604800s"    # 7 days
+
+# Video (experimental)
+video_enabled: false
+video_check_enabled: false
+video_title_suffix: ""
+
+# Logging
+debug: false

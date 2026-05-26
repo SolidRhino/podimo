@@ -16,7 +16,7 @@ FROM gcr.io/distroless/static-debian13:nonroot AS runtime
 
 WORKDIR /src
 
-ENV CACHE_DIR=/tmp/podimo-rss-cache
+ENV PODIMO_CACHE_DIR=/tmp/podimo-rss-cache
 
 COPY --from=builder /src/podimo-rss /src/podimo-rss
 

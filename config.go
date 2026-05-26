@@ -5,38 +5,41 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Hostname          string
-	BindHost          string
-	Protocol          string
-	HTTPProxy         string
-	ZenRowsAPI        string
-	ScraperAPI        string
-	CacheDir          string
-	BlockListFile     string
-	Debug             bool
-	LocalCredentials  bool
-	Email             string
-	Password          string
-	GraphQLURL        string
-	StoreTokensOnDisk bool
-	TokenCacheTime    time.Duration
-	PodcastCacheTime  time.Duration
-	HeadCacheTime     time.Duration
-	PublicFeeds       bool
-	VideoEnabled      bool
-	VideoCheckEnabled bool
-	VideoTitleSuffix  string
-	Locales           []string
-	Regions           []Region
-	Blocked           map[string]struct{}
+	Hostname          string `mapstructure:"hostname"`
+	BindHost          string `mapstructure:"bind_host"`
+	Protocol          string `mapstructure:"protocol"`
+	HTTPProxy         string `mapstructure:"http_proxy"`
+	ZenRowsAPI        string `mapstructure:"zenrows_api"`
+	ScraperAPI        string `mapstructure:"scraper_api"`
+	CacheDir          string `mapstructure:"cache_dir"`
+	BlockListFile     string `mapstructure:"block_list_file"`
+	Debug             bool   `mapstructure:"debug"`
+	LocalCredentials  bool   `mapstructure:"local_credentials"`
+	Email             string `mapstructure:"email"`
+	Password          string `mapstructure:"password"`
+	GraphQLURL        string `mapstructure:"graphql_url"`
+	StoreTokensOnDisk bool   `mapstructure:"store_tokens_on_disk"`
+	TokenCacheTime    time.Duration `mapstructure:"token_cache_time"`
+	PodcastCacheTime  time.Duration `mapstructure:"podcast_cache_time"`
+	HeadCacheTime     time.Duration `mapstructure:"head_cache_time"`
+	PublicFeeds       bool   `mapstructure:"public_feeds"`
+	VideoEnabled      bool   `mapstructure:"video_enabled"`
+	VideoCheckEnabled bool   `mapstructure:"video_check_enabled"`
+	VideoTitleSuffix  string `mapstructure:"video_title_suffix"`
+	Locales           []string `mapstructure:"-"`
+	Regions           []Region `mapstructure:"-"`
+	Blocked           map[string]struct{} `mapstructure:"-"`
 }
 
 type Region struct {
@@ -44,68 +47,44 @@ type Region struct {
 	Name string
 }
 
-func LoadConfig() (*Config, error) {
+func LoadConfig(configFile string) (*Config, error) {
 	_ = godotenv.Load(".env")
 
-	debug, err := parseBool(os.Getenv("DEBUG"))
-	if err != nil {
-		return nil, fmt.Errorf("DEBUG: %w", err)
-	}
-	localCreds, err := parseBool(os.Getenv("LOCAL_CREDENTIALS"))
-	if err != nil {
-		return nil, fmt.Errorf("LOCAL_CREDENTIALS: %w", err)
-	}
-	storeTokens, err := parseBool(getEnv("STORE_TOKENS_ON_DISK", "true"))
-	if err != nil {
-		return nil, fmt.Errorf("STORE_TOKENS_ON_DISK: %w", err)
-	}
-	tokenCacheTime, err := parseDuration(os.Getenv("TOKEN_CACHE_TIME"), 5*24*time.Hour)
-	if err != nil {
-		return nil, fmt.Errorf("TOKEN_CACHE_TIME: %w", err)
-	}
-	podcastCacheTime, err := parseDuration(os.Getenv("PODCAST_CACHE_TIME"), 6*time.Hour)
-	if err != nil {
-		return nil, fmt.Errorf("PODCAST_CACHE_TIME: %w", err)
-	}
-	headCacheTime, err := parseDuration(os.Getenv("HEAD_CACHE_TIME"), 7*24*time.Hour)
-	if err != nil {
-		return nil, fmt.Errorf("HEAD_CACHE_TIME: %w", err)
-	}
-	publicFeeds, err := parseBool(os.Getenv("PUBLIC_FEEDS"))
-	if err != nil {
-		return nil, fmt.Errorf("PUBLIC_FEEDS: %w", err)
-	}
-	videoEnabled, err := parseBool(os.Getenv("ENABLE_VIDEO"))
-	if err != nil {
-		return nil, fmt.Errorf("ENABLE_VIDEO: %w", err)
-	}
-	videoCheckEnabled, err := parseBool(os.Getenv("ENABLE_VIDEO_CHECK"))
-	if err != nil {
-		return nil, fmt.Errorf("ENABLE_VIDEO_CHECK: %w", err)
+	v := viper.New()
+	v.SetEnvPrefix("PODIMO")
+	v.AutomaticEnv()
+
+	// Defaults
+	v.SetDefault("hostname", "localhost:12104")
+	v.SetDefault("bind_host", "127.0.0.1:12104")
+	v.SetDefault("protocol", "http")
+	v.SetDefault("cache_dir", "./cache")
+	v.SetDefault("block_list_file", "./.block-list")
+	v.SetDefault("debug", false)
+	v.SetDefault("local_credentials", false)
+	v.SetDefault("graphql_url", "https://podimo.com/graphql")
+	v.SetDefault("store_tokens_on_disk", true)
+	v.SetDefault("token_cache_time", 5*24*time.Hour)
+	v.SetDefault("podcast_cache_time", 6*time.Hour)
+	v.SetDefault("head_cache_time", 7*24*time.Hour)
+	v.SetDefault("public_feeds", false)
+	v.SetDefault("video_enabled", false)
+	v.SetDefault("video_check_enabled", false)
+
+	if configFile != "" {
+		v.SetConfigFile(configFile)
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("read config file %q: %w", configFile, err)
+		}
+	} else {
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath("/etc/podimo-rss/")
+		v.AddConfigPath(".")
+		_ = v.ReadInConfig() // optional: no file is okay
 	}
 
 	cfg := &Config{
-		Hostname:          getEnv("PODIMO_HOSTNAME", "localhost:12104"),
-		BindHost:          getEnv("PODIMO_BIND_HOST", "127.0.0.1:12104"),
-		Protocol:          getEnv("PODIMO_PROTOCOL", "http"),
-		HTTPProxy:         os.Getenv("HTTP_PROXY"),
-		ZenRowsAPI:        os.Getenv("ZENROWS_API"),
-		ScraperAPI:        os.Getenv("SCRAPER_API"),
-		CacheDir:          getEnv("CACHE_DIR", "./cache"),
-		BlockListFile:     getEnv("BLOCK_LIST_FILE", "./.block-list"),
-		Debug:             debug,
-		LocalCredentials:  localCreds,
-		Email:             os.Getenv("PODIMO_EMAIL"),
-		Password:          os.Getenv("PODIMO_PASSWORD"),
-		GraphQLURL:        "https://podimo.com/graphql",
-		StoreTokensOnDisk: storeTokens,
-		TokenCacheTime:    tokenCacheTime,
-		PodcastCacheTime:  podcastCacheTime,
-		HeadCacheTime:     headCacheTime,
-		PublicFeeds:       publicFeeds,
-		VideoEnabled:      videoEnabled,
-		VideoCheckEnabled: videoCheckEnabled,
-		VideoTitleSuffix:  os.Getenv("VIDEO_TITLE_SUFFIX"),
 		Locales: []string{
 			"nl-NL", "de-DE", "da-DK", "es-ES", "en-US",
 			"es-MX", "no-NO", "fi-FI", "en-GB",
@@ -123,6 +102,19 @@ func LoadConfig() (*Config, error) {
 			{Code: "uk", Name: "United Kingdom"},
 		},
 		Blocked: make(map[string]struct{}),
+	}
+
+	hook := mapstructure.ComposeDecodeHookFunc(
+		strictBoolHook,
+		strictDurationHook,
+	)
+
+	if err := v.Unmarshal(cfg, func(dc *mapstructure.DecoderConfig) {
+		dc.DecodeHook = hook
+		// Preserve zero values where appropriate
+		dc.ZeroFields = false
+	}); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
 	if err := os.MkdirAll(cfg.CacheDir, 0755); err != nil {
@@ -152,6 +144,20 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func strictBoolHook(from, to reflect.Type, data interface{}) (interface{}, error) {
+	if from.Kind() != reflect.String || to.Kind() != reflect.Bool {
+		return data, nil
+	}
+	return parseBool(data.(string))
+}
+
+func strictDurationHook(from, to reflect.Type, data interface{}) (interface{}, error) {
+	if from.Kind() != reflect.String || to != reflect.TypeOf(time.Duration(0)) {
+		return data, nil
+	}
+	return parseDuration(data.(string), 0)
 }
 
 func getEnv(key, fallback string) string {

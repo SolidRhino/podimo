@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -434,30 +436,30 @@ func TestHandleIndexPost(t *testing.T) {
 }
 
 func TestLoadConfig_InvalidBool(t *testing.T) {
-	t.Setenv("DEBUG", "maybe")
-	_, err := LoadConfig()
+	t.Setenv("PODIMO_DEBUG", "maybe")
+	_, err := LoadConfig("")
 	if err == nil {
 		t.Fatal("expected error for invalid DEBUG value")
 	}
-	if !strings.Contains(err.Error(), "DEBUG") {
-		t.Fatalf("expected DEBUG in error, got %v", err)
+	if !strings.Contains(err.Error(), "debug") {
+		t.Fatalf("expected debug in error, got %v", err)
 	}
 }
 
 func TestLoadConfig_InvalidDuration(t *testing.T) {
-	t.Setenv("TOKEN_CACHE_TIME", "forever")
-	_, err := LoadConfig()
+	t.Setenv("PODIMO_TOKEN_CACHE_TIME", "forever")
+	_, err := LoadConfig("")
 	if err == nil {
 		t.Fatal("expected error for invalid TOKEN_CACHE_TIME value")
 	}
-	if !strings.Contains(err.Error(), "TOKEN_CACHE_TIME") {
-		t.Fatalf("expected TOKEN_CACHE_TIME in error, got %v", err)
+	if !strings.Contains(err.Error(), "token_cache_time") {
+		t.Fatalf("expected token_cache_time in error, got %v", err)
 	}
 }
 
 func TestLoadConfig_TrimmedBool(t *testing.T) {
-	t.Setenv("DEBUG", " true ")
-	cfg, err := LoadConfig()
+	t.Setenv("PODIMO_DEBUG", " true ")
+	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -467,8 +469,8 @@ func TestLoadConfig_TrimmedBool(t *testing.T) {
 }
 
 func TestLoadConfig_TrimmedDuration(t *testing.T) {
-	t.Setenv("TOKEN_CACHE_TIME", " 3600 ")
-	cfg, err := LoadConfig()
+	t.Setenv("PODIMO_TOKEN_CACHE_TIME", " 3600 ")
+	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -476,3 +478,60 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 		t.Fatalf("expected 3600s, got %v", cfg.TokenCacheTime)
 	}
 }
+
+func TestLoadConfig_WithYAMLFile(t *testing.T) {
+	content := `hostname: "podimo.example.com"
+bind_host: "0.0.0.0:3000"
+protocol: "https"
+debug: true
+local_credentials: true
+email: "alice@example.com"
+password: "secret"
+token_cache_time: "120h"
+podcast_cache_time: "3600s"
+head_cache_time: "604800s"
+public_feeds: true
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig(%q): %v", path, err)
+	}
+	if cfg.Hostname != "podimo.example.com" {
+		t.Errorf("hostname: got %q, want %q", cfg.Hostname, "podimo.example.com")
+	}
+	if cfg.BindHost != "0.0.0.0:3000" {
+		t.Errorf("bind_host: got %q, want %q", cfg.BindHost, "0.0.0.0:3000")
+	}
+	if cfg.Protocol != "https" {
+		t.Errorf("protocol: got %q, want %q", cfg.Protocol, "https")
+	}
+	if !cfg.Debug {
+		t.Error("debug: expected true")
+	}
+	if !cfg.LocalCredentials {
+		t.Error("local_credentials: expected true")
+	}
+	if cfg.Email != "alice@example.com" {
+		t.Errorf("email: got %q, want %q", cfg.Email, "alice@example.com")
+	}
+	if cfg.Password != "secret" {
+		t.Errorf("password: got %q, want %q", cfg.Password, "secret")
+	}
+	if cfg.TokenCacheTime != 120*time.Hour {
+		t.Errorf("token_cache_time: got %v, want %v", cfg.TokenCacheTime, 120*time.Hour)
+	}
+	if cfg.PodcastCacheTime != 3600*time.Second {
+		t.Errorf("podcast_cache_time: got %v, want %v", cfg.PodcastCacheTime, 3600*time.Second)
+	}
+	if cfg.HeadCacheTime != 604800*time.Second {
+		t.Errorf("head_cache_time: got %v, want %v", cfg.HeadCacheTime, 604800*time.Second)
+	}
+	if !cfg.PublicFeeds {
+		t.Error("public_feeds: expected true")
+	}
+}
+

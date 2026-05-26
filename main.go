@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"flag"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -87,7 +88,10 @@ func (r *RateLimiter) Allow(ip string) bool {
 }
 
 func main() {
-	cfg, err := LoadConfig()
+	configFile := flag.String("config", "", "path to YAML config file")
+	flag.Parse()
+
+	cfg, err := LoadConfig(*configFile)
 	if err != nil {
 		slog.Error("Failed to load config", "error", err)
 		os.Exit(1)
