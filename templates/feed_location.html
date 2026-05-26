@@ -9,47 +9,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <h1>Your RSS feed is ready</h1>
 
   <p>Copy this link into your podcast player (only works if it supports custom private RSS feeds).</p>
 
-  <p><a href="{{ .URL }}" id="feed-url">{{ .URL }}</a></p>
-
-  <div id="button"></div>
-
-  <h2>QR Code</h2>
-  <p>Scan with your phone to add the feed directly.</p>
-  <div id="qrcode" class="qrcode"></div>
+  {{ template "feed_result" . }}
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSE1QMDIzWPHnnv/HakYGWopdB3/oHwxIpRg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script>
-    const url = "{{ .URL }}";
-
-    function copy() {
-      navigator.clipboard.writeText(url).then(() => {
-        const feedback = document.getElementById('copyFeedback');
-        if (feedback) feedback.classList.add('visible');
-        setTimeout(() => {
-          if (feedback) feedback.classList.remove('visible');
-        }, 2000);
-      });
-    }
-
-    function setButtonDiv() {
-      const container = document.getElementById("button");
-      container.innerHTML = '<button id="copy" onclick="copy()">Copy to clipboard</button>' +
-        '<span id="copyFeedback" class="copy-feedback">Copied!</span>';
-    }
-
-    setButtonDiv();
-
-    new QRCode(document.getElementById("qrcode"), {
-      text: url,
-      width: 200,
-      height: 200,
-    });
-  </script>
 </body>
 </html>

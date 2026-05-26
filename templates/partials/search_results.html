@@ -1,0 +1,21 @@
+{{ if .Error }}
+<span class="search-err">Error: {{ .Error }}</span>
+{{ else if not .Results }}
+<em class="search-msg">No podcasts found.</em>
+{{ else }}
+<ul>
+  {{ range .Results }}
+  <li onclick="selectPodcast('{{ .id }}')">
+    {{ if .coverImageUrl }}
+    <img src="{{ .coverImageUrl }}" width="48" height="48">
+    {{ end }}
+    <div>
+      <strong>{{ .title }}</strong>
+      {{ if .authorName }}
+      <br><small>{{ .authorName }}</small>
+      {{ end }}
+    </div>
+  </li>
+  {{ end }}
+</ul>
+{{ end }}

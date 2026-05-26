@@ -36,13 +36,9 @@ func setupTestApp(t *testing.T) *App {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	indexTmpl, err := template.ParseFS(templatesFS, "templates/index.html")
+	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
-		t.Fatalf("parse index template: %v", err)
-	}
-	feedTmpl, err := template.ParseFS(templatesFS, "templates/feed_location.html")
-	if err != nil {
-		t.Fatalf("parse feed template: %v", err)
+		t.Fatalf("parse templates: %v", err)
 	}
 
 	app := &App{
@@ -56,8 +52,7 @@ func setupTestApp(t *testing.T) *App {
 			MaxSize: 100,
 			TTL:     time.Hour,
 		}),
-		indexTmpl: indexTmpl,
-		feedTmpl:  feedTmpl,
+		templates: tmpl,
 	}
 	t.Cleanup(func() {
 		app.limiter.ips.Stop()
@@ -295,16 +290,9 @@ func TestHandleSearch(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid JSON response: %v", err)
-	}
-	results, ok := resp["results"].([]interface{})
-	if !ok || len(results) != 1 {
-		t.Fatalf("expected 1 result, got %v", resp["results"])
-	}
-	if resp["query"] != "test" {
-		t.Fatalf("expected query 'test', got %v", resp["query"])
+	body := rr.Body.String()
+	if !strings.Contains(body, "Podcast 1") {
+		t.Fatalf("expected HTML containing 'Podcast 1', got: %s", body)
 	}
 }
 
@@ -339,13 +327,9 @@ func TestHandleSubscriptions(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("invalid JSON response: %v", err)
-	}
-	results, ok := resp["results"].([]interface{})
-	if !ok || len(results) != 1 {
-		t.Fatalf("expected 1 result, got %v", resp["results"])
+	body := rr.Body.String()
+	if !strings.Contains(body, "Followed Podcast") {
+		t.Fatalf("expected HTML containing 'Followed Podcast', got: %s", body)
 	}
 }
 

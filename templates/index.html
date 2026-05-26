@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js" crossorigin="anonymous"></script>
 </head>
 <body>
   <h1>Podimo-to-RSS converter</h1>
@@ -52,11 +54,25 @@
 
     <h2>🔍 Search for a podcast</h2>
     <label for="search_query">Search by name</label>
-    <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
-    <button type="button" id="searchBtn" class="btn-secondary">Search</button>
+    <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2"
+           hx-get="/search" hx-target="#searchResults"
+           hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']">
+    <button type="button" id="searchBtn" class="btn-secondary"
+            hx-get="/search" hx-target="#searchResults"
+            hx-include="[name='search_query']" hx-trigger="click">
+      Search
+    </button>
     <div id="searchResults" class="search-results"></div>
 
     <hr />
+
+    <h2>📻 Your Subscriptions</h2>
+    <button type="button" class="btn-secondary"
+            hx-get="/subscriptions" hx-target="#subscriptionsResults"
+            hx-trigger="click">
+      Show subscriptions
+    </button>
+    <div id="subscriptionsResults" class="search-results"></div>
 
     <h2>📻 Or use your Podcast ID</h2>
     <label for="podcast_id">Podcast ID or URL</label>
@@ -95,75 +111,22 @@
       }
     });
 
-    const searchBtn = document.getElementById('searchBtn');
-    const searchInput = document.getElementById('search_query');
-    const resultsDiv = document.getElementById('searchResults');
-
-    async function doSearch() {
-      const query = searchInput.value.trim();
-      if (query.length < 2) return;
-
-      resultsDiv.innerHTML = '<em class="search-msg">Searching…</em>';
-
-      const url = new URL(window.location.origin + '/search');
-      url.searchParams.set('q', query);
-
-      {{ if .NeedCredentials }}
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      if (email && password) {
-        url.username = encodeURIComponent(email);
-        url.password = encodeURIComponent(password);
-      }
-      {{ end }}
-
-      try {
-        const response = await fetch(url.toString());
-        if (!response.ok) {
-          const text = await response.text();
-          resultsDiv.innerHTML = '<span class="search-err">Error: ' + text + '</span>';
-          return;
-        }
-        const data = await response.json();
-        if (!data.results || data.results.length === 0) {
-          resultsDiv.innerHTML = '<em class="search-msg">No podcasts found.</em>';
-          return;
-        }
-        let html = '<ul>';
-        for (const podcast of data.results) {
-          html += '<li onclick="selectPodcast(\'' + podcast.id + '\')">';
-          if (podcast.coverImageUrl) {
-            html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48">';
-          }
-          html += '<div><strong>' + encodeHtml(podcast.title) + '</strong>';
-          if (podcast.authorName) html += '<br><small>' + encodeHtml(podcast.authorName) + '</small>';
-          html += '</div></li>';
-        }
-        html += '</ul>';
-        resultsDiv.innerHTML = html;
-      } catch (err) {
-        resultsDiv.innerHTML = '<span class="search-err">Search failed: ' + err.message + '</span>';
-      }
-    }
-
-    function encodeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    searchBtn.addEventListener('click', doSearch);
-    searchInput.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        doSearch();
+{{ if .NeedCredentials }}
+    // Forward form credentials to HTMX requests so the search endpoint can authenticate.
+    document.addEventListener('htmx:configRequest', function(evt) {
+      var email = document.getElementById('email');
+      var password = document.getElementById('password');
+      if (email && password && email.value && password.value) {
+        evt.detail.headers['Authorization'] = 'Basic ' + btoa(
+          encodeURIComponent(email.value) + ':' + encodeURIComponent(password.value)
+        );
       }
     });
+{{ end }}
 
     window.selectPodcast = function(id) {
       document.getElementById('podcast_id').value = id;
-      resultsDiv.innerHTML = '';
-      searchInput.value = '';
+      document.getElementById('searchResults').innerHTML = '';
     };
   </script>
 </body>

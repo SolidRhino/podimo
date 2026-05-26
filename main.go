@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -24,8 +23,9 @@ import (
 )
 
 //go:embed templates/*
-//go:embed static/*
 var templatesFS embed.FS
+
+//go:embed static/*
 var staticFS embed.FS
 
 var podcastIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -40,8 +40,7 @@ type App struct {
 	cfg          *Config
 	logger       *slog.Logger
 	limiter      *RateLimiter
-	indexTmpl    *template.Template
-	feedTmpl     *template.Template
+	templates    *template.Template
 	tokenCache   *podimo.FileCache
 	podcastCache *podimo.FileCache
 	headCache    *podimo.FileCache
@@ -111,15 +110,9 @@ func main() {
 		},
 	}))
 
-	indexTmpl, err := template.ParseFS(templatesFS, "templates/index.html")
+	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
-		logger.Error("Failed to parse index template", "error", err)
-		os.Exit(1)
-	}
-
-	feedTmpl, err := template.ParseFS(templatesFS, "templates/feed_location.html")
-	if err != nil {
-		logger.Error("Failed to parse feed template", "error", err)
+		logger.Error("Failed to parse templates", "error", err)
 		os.Exit(1)
 	}
 
@@ -145,8 +138,7 @@ func main() {
 		cfg:          cfg,
 		logger:       logger,
 		limiter:      NewRateLimiter(10*time.Second, 8),
-		indexTmpl:    indexTmpl,
-		feedTmpl:     feedTmpl,
+		templates:    tmpl,
 		tokenCache:   tokenCache,
 		podcastCache: podcastCache,
 		headCache:    headCache,
@@ -225,7 +217,10 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
-		http.Error(w, "Query must be at least 2 characters", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+			"Error": "Query must be at least 2 characters",
+		})
 		return
 	}
 
@@ -262,28 +257,27 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
-		authenticate(w)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+			"Error": "Authentication required",
+		})
 		return
 	}
 
 	results, err := client.SearchPodcasts(r.Context(), searchQuery)
 	if err != nil {
 		a.logger.Error("Search error", "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"results": []interface{}{},
-			"query":   searchQuery,
-			"error":   "Search failed. Podimo may have changed their API.",
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+			"Error": "Search failed. Podimo may have changed their API.",
 		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"results": results,
-		"query":   searchQuery,
-		"message": "",
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+		"Results": results,
+		"Query":   searchQuery,
 	})
 }
 
@@ -321,20 +315,26 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
-		authenticate(w)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+			"Error": "Authentication required",
+		})
 		return
 	}
 
 	results, err := client.GetFollowedPodcasts(r.Context())
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
-		http.Error(w, "Failed to fetch subscriptions", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+			"Error": "Failed to fetch subscriptions",
+		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"results": results,
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+		"Results": results,
 	})
 }
 
@@ -587,7 +587,7 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"Locales":         a.cfg.Locales,
 		"NeedCredentials": !a.cfg.LocalCredentials,
 	}
-	if err := a.indexTmpl.Execute(w, data); err != nil {
+	if err := a.templates.ExecuteTemplate(w, "index.html", data); err != nil {
 		a.logger.Error("Template render error", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
@@ -601,7 +601,7 @@ func (a *App) renderIndex(w http.ResponseWriter, r *http.Request, errorMsg, podc
 		"PodcastID":       podcastID,
 		"NeedCredentials": !a.cfg.LocalCredentials,
 	}
-	if err := a.indexTmpl.Execute(w, data); err != nil {
+	if err := a.templates.ExecuteTemplate(w, "index.html", data); err != nil {
 		a.logger.Error("Template render error", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
@@ -611,7 +611,7 @@ func (a *App) renderFeedLocation(w http.ResponseWriter, r *http.Request, feedURL
 	data := map[string]interface{}{
 		"URL": feedURL,
 	}
-	if err := a.feedTmpl.Execute(w, data); err != nil {
+	if err := a.templates.ExecuteTemplate(w, "feed_location.html", data); err != nil {
 		a.logger.Error("Template render error", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
