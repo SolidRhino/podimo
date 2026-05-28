@@ -247,9 +247,6 @@ debug: true                 # verbose logging
 Or via environment variables (prefixed with `PODIMO_`):
 - `PODIMO_LOCAL_CREDENTIALS=true` — single-user mode, credentials stored server-side
 - `PODIMO_PUBLIC_FEEDS=true` — removes `<itunes:block>` from RSS
-- `PODIMO_VIDEO_ENABLED=true` — adds HLS video URLs to episode descriptions
-- `PODIMO_VIDEO_CHECK_ENABLED=true` — requests Podimo servers to detect video versions (experimental)
-- `PODIMO_VIDEO_TITLE_SUFFIX='(video available)'` — suffix appended to titles of podcasts with a video version
 - `PODIMO_DEBUG=true` — verbose `slog` logging at `LevelDebug`
 
 ### Running locally
@@ -382,9 +379,6 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 | `PODIMO_PODCAST_CACHE_TIME` / `podcast_cache_time` | `21600s` | Episode list cache TTL |
 | `PODIMO_HEAD_CACHE_TIME` / `head_cache_time` | `604800s` | HEAD response cache TTL |
 | `PODIMO_PUBLIC_FEEDS` / `public_feeds` | `false` | Remove `<itunes:block>` from RSS |
-| `PODIMO_VIDEO_ENABLED` / `video_enabled` | `false` | Experimental video support |
-| `PODIMO_VIDEO_CHECK_ENABLED` / `video_check_enabled` | `false` | Experimental: detect video versions |
-| `PODIMO_VIDEO_TITLE_SUFFIX` / `video_title_suffix` | — | Suffix for podcasts with video |
 | `PODIMO_DEBUG` / `debug` | `false` | Verbose `slog` logging
 
 ## Security Notes for Agents

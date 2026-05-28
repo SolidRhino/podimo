@@ -34,9 +34,6 @@ type Config struct {
 	PodcastCacheTime  time.Duration `mapstructure:"podcast_cache_time"`
 	HeadCacheTime     time.Duration `mapstructure:"head_cache_time"`
 	PublicFeeds       bool   `mapstructure:"public_feeds"`
-	VideoEnabled      bool   `mapstructure:"video_enabled"`
-	VideoCheckEnabled bool   `mapstructure:"video_check_enabled"`
-	VideoTitleSuffix  string `mapstructure:"video_title_suffix"`
 	Locales           []string `mapstructure:"-"`
 	Regions           []Region `mapstructure:"-"`
 	Blocked           map[string]struct{} `mapstructure:"-"`
@@ -68,8 +65,6 @@ func LoadConfig(configFile string) (*Config, error) {
 	v.SetDefault("podcast_cache_time", 6*time.Hour)
 	v.SetDefault("head_cache_time", 7*24*time.Hour)
 	v.SetDefault("public_feeds", false)
-	v.SetDefault("video_enabled", false)
-	v.SetDefault("video_check_enabled", false)
 
 	if configFile != "" {
 		v.SetConfigFile(configFile)

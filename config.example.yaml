@@ -29,10 +29,5 @@ token_cache_time: "432000s"   # 5 days
 podcast_cache_time: "21600s"  # 6 hours
 head_cache_time: "604800s"    # 7 days
 
-# Video (experimental)
-video_enabled: false
-video_check_enabled: false
-video_title_suffix: ""
-
 # Logging
 debug: false
