@@ -13,7 +13,8 @@ podimo/
 ├── client.go / client_test.go  → PodimoClient: auth, queries, pagination
 ├── graphql.go / graphql_test.go → GraphQLClient: HTTP POST wrapper
 ├── rss.go / rss_test.go         → RSS builder + audio URL extraction
-└── cache.go / cache_test.go     → FileCache: disk-backed TTL
+├── cache.go / cache_test.go     → FileCache: disk-backed TTL
+└── boundedmap.go / boundedmap_test.go → BoundedMap: generic in-memory LRU + TTL
 ```
 
 ## Error Taxonomy
@@ -55,12 +56,24 @@ if client.Token() != "" {
 token, err := client.Login(ctx)
 ```
 
+Token caching is optional — pass `nil` for `tokenCache` when `StoreTokensOnDisk` is `false`.
+
 ## File Cache
 Per-key JSON files (`<key>.json`) with embedded `expires_at`. Per-key mutex isolates concurrent writes to different keys.
 
 ```go
 cache.Set(key, value, ttl)
 if v, ok := cache.Get(key); ok { /* type-assert expected shape */ }
+```
+
+## BoundedMap
+Generic in-memory LRU cache with optional TTL and background cleanup. Used for per-user `http.Client` pools and rate-limiter IP tracking. Background cleanup goroutines are lightweight and exit naturally on process termination.
+
+```go
+m := podimo.NewBoundedMap[string, *http.Client](podimo.BoundedMapOptions{
+    MaxSize: 100,
+    TTL:     time.Hour,
+})
 ```
 
 ## Parallel Chunked RSS Workers
@@ -79,10 +92,13 @@ for _, chunk := range chunks(episodes, 5) {
 3. Type-assert every nested field with two-step `x, ok := y.(T)`.
 4. Map upstream auth failures to `AuthenticationError`; missing resources to `PodcastNotFoundError`.
 5. Cache the stitched result (not per-page fragments) when applicable.
+6. Add mock responses to `mockGraphQLServer` in `client_test.go`.
 </important>
 
 <important if="you are adding a new cache consumer">
-1. Create `podimo.NewFileCache(filepath.Join(cfg.CacheDir, "my_cache"))`.
-2. Store values with `cache.Set(key, value, ttl)`.
-3. Read defensively: `if v, ok := cache.Get(key); ok { /* type-assert */ }`.
+1. Accept `*podimo.FileCache` in the constructor or function signature.
+2. Choose a stable string key (often a SHA-256 hash or UUID).
+3. Call `Get(key)` at the start of the operation; if hit, return early.
+4. On miss, perform the work, then `Set(key, result, ttl)`.
+5. Ensure cached values are JSON-serializable (maps, slices, scalars).
 </important>
