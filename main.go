@@ -520,7 +520,11 @@ func (a *App) checkAuth(ctx context.Context, username, password, region, locale 
 	key := podimo.TokenKey(username, password)
 	httpClient := a.getHTTPClient(key)
 	graphql := podimo.NewGraphQLClient(a.graphqlEndpoint(), httpClient)
-	client, err := podimo.NewPodimoClient(username, password, region, locale, graphql, a.tokenCache, a.podcastCache, a.logger)
+	var tokenCache *podimo.FileCache
+	if a.cfg.StoreTokensOnDisk {
+		tokenCache = a.tokenCache
+	}
+	client, err := podimo.NewPodimoClient(username, password, region, locale, graphql, tokenCache, a.podcastCache, a.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +535,7 @@ func (a *App) checkAuth(ctx context.Context, username, password, region, locale 
 	if err != nil {
 		return nil, err
 	}
-	if token != "" {
+	if token != "" && a.cfg.StoreTokensOnDisk {
 		a.tokenCache.Set(key, token, a.cfg.TokenCacheTime)
 	}
 	return client, nil

@@ -49,6 +49,19 @@ func TestNewPodimoClient_LoadsCachedToken(t *testing.T) {
 	}
 }
 
+func TestNewPodimoClient_NilTokenCache(t *testing.T) {
+	dir := t.TempDir()
+	gl := NewGraphQLClient("http://localhost", nil)
+	pc, _ := NewFileCache(dir)
+	client, err := NewPodimoClient("user", "pass", "nl", "nl-NL", gl, nil, pc, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client.Token() != "" {
+		t.Fatalf("expected empty token when nil cache, got %s", client.Token())
+	}
+}
+
 func TestPodimoClient_Login(t *testing.T) {
 	srv := mockGraphQLServer(t, []map[string]interface{}{
 		{"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"}},

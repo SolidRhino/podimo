@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"io"
@@ -34,6 +35,7 @@ func setupTestApp(t *testing.T) *App {
 		TokenCacheTime:   time.Hour,
 		PodcastCacheTime: time.Hour,
 		HeadCacheTime:    time.Hour,
+		StoreTokensOnDisk: true,
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -433,6 +435,52 @@ func TestHandleIndexPost(t *testing.T) {
 	if !strings.Contains(body, "/feed/") {
 		t.Fatalf("expected feed URL in response, got %s", body)
 	}
+}
+
+func TestCheckAuth_StoreTokensOnDiskFalse(t *testing.T) {
+	srv := mockGraphQLServer(t, []map[string]interface{}{
+		{"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"}},
+		{"userOnboardingFlow": map[string]interface{}{"id": "oid"}},
+		{"tokenWithCredentials": map[string]interface{}{"token": "final"}},
+	})
+	defer srv.Close()
+
+	app := setupTestApp(t)
+	app.cfg.StoreTokensOnDisk = false
+	app.cfg.GraphQLURL = srv.URL
+
+	key := podimo.TokenKey("u", "p")
+	if _, ok := app.tokenCache.Get(key); ok {
+		t.Fatal("tokenCache should be empty before checkAuth")
+	}
+
+	_, err := app.checkAuth(context.Background(), "u", "p", "nl", "nl-NL")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := app.tokenCache.Get(key); ok {
+		t.Fatal("expected cache to stay empty when StoreTokensOnDisk=false")
+	}
+}
+
+// Helper that matches the client_test pattern but lives in main_test
+func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httptest.Server {
+	idx := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		if idx < len(responses) {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": responses[idx],
+			})
+			idx++
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{},
+			})
+		}
+	}))
 }
 
 func TestLoadConfig_InvalidBool(t *testing.T) {

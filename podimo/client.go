@@ -59,7 +59,10 @@ func NewPodimoClient(username, password, region, locale string, graphql *GraphQL
 	}
 
 	key := TokenKey(username, password)
-	storedToken, _ := tokenCache.Get(key)
+	var storedToken interface{}
+	if tokenCache != nil {
+		storedToken, _ = tokenCache.Get(key)
+	}
 
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
