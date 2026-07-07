@@ -21,6 +21,7 @@ test:
 
 # Build and run the server locally (uses ./config.yaml if found)
 run: build
+    #!/usr/bin/env bash
     if test -f "config.yaml"; then
         ./{{binary}} --config=config.yaml
     else
@@ -55,6 +56,7 @@ docker-build:
 
 # Build and run the Docker container (detached)
 docker-run: docker-build
+    #!/usr/bin/env bash
     docker rm -f {{docker_container}} 2>/dev/null || true
     # Mount config.yaml read-only if it exists
     if test -f "$PWD/config.yaml"; then
