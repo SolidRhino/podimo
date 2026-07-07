@@ -69,7 +69,7 @@ class PodimoClient:
     def generateHeaders(self, authorization: Optional[str]) -> Dict[str, str]:
         return gHdrs(authorization, self.locale)
 
-    async def post(self, headers: Dict[str, str], query: str, variables: Dict[str, Any], scraper: Any) -> Dict[str, Any]:
+    async def post(self, headers: Dict[str, str], query: str, variables: Dict[str, Any], scraper: Any, operation_name: Optional[str] = None) -> Dict[str, Any]:
         if SCRAPER_API is not None:
             POST_URL = f"https://api.scraperapi.com?api_key={SCRAPER_API}&url={GRAPHQL_URL}&keep_headers=true"
         elif ZENROWS_API is not None:
@@ -77,6 +77,9 @@ class PodimoClient:
             scraper = _get_zenrows_client()
         else:
             POST_URL = GRAPHQL_URL
+        # Add Apollo CSRF bypass header if operation name is provided
+        if operation_name:
+            headers = {**headers, "x-apollo-operation-name": operation_name}
         response = await async_wrap(scraper.post)(POST_URL,
                                         headers=headers,
                                         cookies=self.cookie_jar,
@@ -114,7 +117,7 @@ class PodimoClient:
             }
         """
         variables = {"locale": self.locale, "countryCode": self.region, "appsFlyerId": randomFlyerId()}
-        result = await self.post(headers, query, variables, scraper)
+        result = await self.post(headers, query, variables, scraper, operation_name="AuthorizationPreregisterUser")
         tokenWithPreregisterUser = result["tokenWithPreregisterUser"]
         if not tokenWithPreregisterUser:
             raise RuntimeError("Podimo did not provide a tokenWithPreregisterUser")
@@ -135,7 +138,7 @@ class PodimoClient:
             }
         """
         variables = {"locale": self.locale, "countryCode": self.region, "appsFlyerId": randomFlyerId()}
-        result = await self.post(headers, query, variables, scraper)
+        result = await self.post(headers, query, variables, scraper, operation_name="OnboardingQuery")
         prereg_id: str = result["userOnboardingFlow"]["id"]
         self.prereg_id = prereg_id
         return prereg_id
@@ -165,7 +168,7 @@ class PodimoClient:
                 "locale": self.locale,
                 "preregisterId": self.prereg_id,
             }
-            result = await self.post(headers, query, variables, scraper)
+            result = await self.post(headers, query, variables, scraper, operation_name="AuthorizationAuthorize")
             tokenWithCredentials = result["tokenWithCredentials"]
             if not tokenWithCredentials:
                 raise AuthenticationError("Invalid Podimo credentials, did not receive tokenWithCredentials")
@@ -240,7 +243,7 @@ class PodimoClient:
                 "offset": offset,
                 "sorting": "PUBLISHED_DESCENDING",
             }
-            result = await self.post(headers, query, variables, scraper)
+            result = await self.post(headers, query, variables, scraper, operation_name="ChannelEpisodesQuery")
             if offset == 0:
                 podcastName = self.getPodcastName(result)
                 logging.debug(f"Fetched podcast '{podcastName}' ({podcast_id}) directly")
@@ -279,6 +282,7 @@ class PodimoClient:
             query: str
             variables: Dict[str, Any]
             result_key: str
+            operation_name: str
 
         variants: List[SearchVariant] = [
             # Variant 1: original schema (as it was before any changes)
@@ -296,6 +300,7 @@ class PodimoClient:
                 """,
                 "variables": {"search": query},
                 "result_key": "podcastsAutocomplete",
+                "operation_name": "PodcastsAutocomplete",
             },
             # Variant 2: minimal fields (if coverImageUrl/authorName/description were removed)
             {
@@ -309,6 +314,7 @@ class PodimoClient:
                 """,
                 "variables": {"search": query},
                 "result_key": "podcastsAutocomplete",
+                "operation_name": "PodcastsAutocomplete",
             },
             # Variant 3: alternative endpoint name
             {
@@ -323,13 +329,14 @@ class PodimoClient:
                 """,
                 "variables": {"search": query},
                 "result_key": "searchPodcasts",
+                "operation_name": "SearchPodcasts",
             },
         ]
 
         last_error = None
         for variant in variants:
             try:
-                result = await self.post(headers, variant["query"], variant["variables"], scraper)
+                result = await self.post(headers, variant["query"], variant["variables"], scraper, operation_name=variant["operation_name"])
                 podcasts = result.get(variant["result_key"], [])
                 if isinstance(podcasts, list):
                     logging.debug(f"Search returned {len(podcasts)} results via {variant['result_key']}")
@@ -360,7 +367,7 @@ class PodimoClient:
             }
         """
         variables: Dict[str, Any] = {}
-        result = await self.post(headers, gql_query, variables, scraper)
+        result = await self.post(headers, gql_query, variables, scraper, operation_name="PodcastsFollowed")
         podcasts = result.get("podcastsFollowed", [])
         if not isinstance(podcasts, list):
             return []
