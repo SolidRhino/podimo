@@ -17,6 +17,7 @@
 # See the Licence for the specific language governing
 # permissions and limitations under the Licence.
 
+from http.cookiejar import CookieJar
 from podimo.config import *
 from typing import Any, Dict, Optional, Tuple
 from time import time
@@ -32,7 +33,7 @@ if STORE_TOKENS_ON_DISK:
 
 # Give each user its own cookie jar to keep track of cookies that are
 # being set and used between different requests.
-cookie_jars: Dict[str, Any] = dict()
+cookie_jars: Dict[str, CookieJar] = dict()
 
 url_cache = Cache(join(CACHE_DIR, 'url_cache'))
 podcast_cache = Cache(join(CACHE_DIR, 'podcast_cache'))

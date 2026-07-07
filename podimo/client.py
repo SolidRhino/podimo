@@ -17,6 +17,7 @@
 # See the Licence for the specific language governing
 # permissions and limitations under the Licence.
 
+from http.cookiejar import CookieJar
 from podimo.config import GRAPHQL_URL, SCRAPER_API, ZENROWS_API
 from podimo.utils import (is_correct_email_address, token_key,
                           randomFlyerId, generateHeaders as gHdrs,
@@ -53,7 +54,7 @@ class PodimoClient:
         self.password: str = password
         self.region: str = region
         self.locale: str = locale
-        self.cookie_jar: Optional[Any] = None
+        self.cookie_jar: Optional[CookieJar] = None
         self.key: str = token_key(username, password)
         self.token: Optional[str] = None
         self.preauth_token: Optional[str] = None
@@ -86,6 +87,27 @@ class PodimoClient:
                                         json={"query": query, "variables": variables},
                                         timeout=(6.05, 30)
                                     )
+        if response is None:
+            raise RuntimeError(f"Could not receive response for query: {query.strip()[:30]}...")
+
+        # Re-login fallback: if the request failed with non-200 and we have a token
+        # (meaning we're past the login flow), clear stale cookies, re-login, and retry once.
+        if response.status_code != 200 and self.token is not None:
+            logging.debug(f"Retrying after non-200 response ({response.status_code}) for {operation_name or query.strip()[:30]}")
+            assert self.cookie_jar is not None
+            if self.cookie_jar is not None:
+                self.cookie_jar.clear()
+            await self.podimoLogin(scraper)
+            headers = self.generateHeaders(self.token)
+            if operation_name:
+                headers = {**headers, "x-apollo-operation-name": operation_name}
+            response = await async_wrap(scraper.post)(POST_URL,
+                                            headers=headers,
+                                            cookies=self.cookie_jar,
+                                            json={"query": query, "variables": variables},
+                                            timeout=(6.05, 30)
+                                        )
+
         if response is None:
             raise RuntimeError(f"Could not receive response for query: {query.strip()[:30]}...")
         if response.status_code != 200:

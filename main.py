@@ -29,7 +29,8 @@ from lxml import etree
 from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, AuthenticationError
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
-from aiohttp import ClientSession, CookieJar, ClientTimeout
+from http.cookiejar import CookieJar
+from aiohttp import ClientSession, ClientTimeout
 from quart import Quart, Response, render_template, request, jsonify
 from hashlib import sha256
 from hypercorn.config import Config
@@ -133,6 +134,10 @@ async def check_auth(username: str, password: str, region: str, locale: str, scr
     try:
         client = initialize_client(username, password, region, locale)
         if client.token:
+            # Clear stale cookies when reusing a cached token.
+            # Fresh cookies will be obtained during the first request.
+            assert client.cookie_jar is not None
+            client.cookie_jar.clear()
             return client
 
         await client.podimoLogin(scraper)
