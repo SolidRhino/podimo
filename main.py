@@ -334,6 +334,16 @@ def split_username_region_locale(string: str) -> Tuple[str, str, str]:
 
 @app.route("/feed/<string:username>/<string:password>/<string:podcast_id>.xml")
 @limit_request()
+async def serve_creds_feed(username: str, password: str, podcast_id: str) -> Response:
+    """Legacy feed URL with credentials embedded in the path.
+
+    Region and locale are read from query args (?region=nl&locale=nl-NL),
+    defaulting to Dutch for podcast-app compatibility (see AGENTS.md).
+    """
+    region = request.args.get("region", "nl")
+    locale = request.args.get("locale", "nl-NL")
+    return await serve_feed(username, password, podcast_id, region, locale)
+
 async def serve_feed(username: str, password: str, podcast_id: str, region: str, locale: str) -> Response:
     
     logging.debug(f"Feed request for podcast {podcast_id} from IP {request.remote_addr} with User-Agent:{request.user_agent}.")

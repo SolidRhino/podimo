@@ -164,6 +164,25 @@ class TestWebRoutes:
             body = await response.get_data()
             assert b'Invalid region' in body
 
+    @pytest.mark.asyncio
+    async def test_legacy_creds_feed_path_binds_region_locale(self):
+        """Legacy /feed/<username>/<password>/<podcast_id>.xml must read
+        region/locale from query args, not raise TypeError for missing args.
+
+        Regression: the route called serve_feed(username,password,podcast_id,
+        region, locale) but only the first three were path-bound, so the
+        documented URL shape raised 'missing 2 required positional arguments'.
+        """
+        async with app.test_client() as client:
+            response = await client.get(
+                '/feed/user@example.com/pass/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml?region=badregion&locale=nl-NL'
+            )
+            # 400 Invalid region proves the wrapper forwards query args
+            # into serve_feed instead of raising TypeError (was 500).
+            assert response.status_code == 400
+            body = await response.get_data()
+            assert b'Invalid region' in body
+
 
 class TestPodcastIdRegex:
     """Test the tightened UUID regex."""
