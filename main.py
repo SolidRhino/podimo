@@ -30,12 +30,12 @@ from podimo.client import PodimoClient, PodcastNotFoundError, PodimoError, Authe
 from feedgen.feed import FeedGenerator
 from mimetypes import guess_type
 from http.cookiejar import CookieJar
-from aiohttp import ClientSession, ClientTimeout
+from aiohttp import ClientSession, ClientTimeout, ClientError
 from quart import Quart, Response, render_template, request, jsonify
-from hashlib import sha256
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from urllib.parse import quote
+from collections import deque
 from podimo.config import *
 from podimo.utils import generateHeaders, randomHexId, video_exists_at_url
 import podimo.cache as cache
@@ -43,9 +43,22 @@ import cloudscraper
 import traceback
 
 # Setup Quart, used for serving the web pages
-app = Quart(__name__)
-proxies: Dict[str, str] = dict()
+from dataclasses import dataclass, field
+from asyncio import Lock
+@dataclass
+class AppState:
+    """Container for mutable global state shared across async handlers."""
+    proxies: Dict[str, str] = field(default_factory=dict)
+    proactive: Dict[str, deque] = field(default_factory=dict)
+    lock: Lock = field(default_factory=Lock)
 
+# Global app state instance
+app_state = AppState()
+# Backward-compatible aliases (used by legacy code and tests)
+proactive = app_state.proactive
+proxies = app_state.proxies
+
+app = Quart(__name__)
 #Setup logging
 logging.basicConfig(
     format="%(levelname)s | %(asctime)s | %(message)s",
@@ -53,23 +66,28 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-proactive: Dict[str, List[float]] = dict()
+# Configurable rate limiting (default 8 requests per 10 seconds)
+RATE_LIMIT = int(getenv("RATE_LIMIT", "8"))
+RATE_WINDOW = int(getenv("RATE_WINDOW", "10"))
 
 def limit_request() -> Callable:
+    """Decorator that enforces per‑IP rate limiting using the shared AppState."""
     def rate_limiter(func: Callable[..., Awaitable[Response]]) -> Callable[..., Awaitable[Response]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Response:
-            ip = request.remote_addr or 'unknown'
+            ip = request.remote_addr or "unknown"
             now = time.time()
-            reqs: List[float] = proactive.get(ip, [])
-            reqs = [t for t in reqs if now - t < 10]
-            reqs.append(now)
-            proactive[ip] = reqs
-            if len(reqs) > 8:
-                return Response('Rate limit exceeded', 429)
+            dq = app_state.proactive.get(ip)
+            if dq is None:
+                dq = deque()
+                app_state.proactive[ip] = dq
+            while dq and now - dq[0] > RATE_WINDOW:
+                dq.popleft()
+            dq.append(now)
+            if len(dq) > RATE_LIMIT:
+                return Response("Rate limit exceeded", 429)
             return await func(*args, **kwargs)
         return wrapper
-
     return rate_limiter
 
 
@@ -181,14 +199,13 @@ async def search_podcasts():
             return authenticate()
         username, region, locale = split_username_region_locale(auth.username)
         password = auth.password
-
     if region not in [rc for (rc, _) in REGIONS]:
         return Response("Invalid region", 400)
     if locale not in LOCALES:
         return Response("Invalid locale", 400)
 
     with cloudscraper.create_scraper() as scraper:
-        scraper.proxies = proxies
+        scraper.proxies = app_state.proxies
         client = await check_auth(username, password, region, locale, scraper)
         if not client:
             return authenticate()
@@ -221,13 +238,8 @@ async def subscriptions():
         username, region, locale = split_username_region_locale(auth.username)
         password = auth.password
 
-    if region not in [rc for (rc, _) in REGIONS]:
-        return Response("Invalid region", 400)
-    if locale not in LOCALES:
-        return Response("Invalid locale", 400)
-
     with cloudscraper.create_scraper() as scraper:
-        scraper.proxies = proxies
+        scraper.proxies = app_state.proxies
         client = await check_auth(username, password, region, locale, scraper)
         if not client:
             return authenticate()
@@ -282,7 +294,7 @@ async def index():
                 password = quote(str(password), safe="")             
                 url = f"{PODIMO_PROTOCOL}://{username}:{password}@{PODIMO_HOSTNAME}/feed/{podcast_id}.xml?{randomHexId(10)}&region={region}&locale={locale}"
             
-            logging.debug(f"Created an URL: {url}.")
+            logging.debug(f"Created feed URL for podcast {podcast_id} region={region} locale={locale}")
             return await render_template("feed_location.html", url=url)
 
     return await render_template("index.html", error=error, locales=LOCALES, regions=REGIONS, need_credentials=not(LOCAL_CREDENTIALS))
@@ -307,9 +319,8 @@ async def serve_basic_auth_feed(podcast_id):
         auth = request.authorization
         if not auth:
             return authenticate()
-        else:
-            username, region, locale = split_username_region_locale(auth.username)
-            return await serve_feed(username, auth.password, podcast_id, region, locale)
+        username, region, locale = split_username_region_locale(auth.username)
+        return await serve_feed(username, auth.password, podcast_id, region, locale)
 
 
 def split_username_region_locale(string: str) -> Tuple[str, str, str]:
@@ -317,14 +328,8 @@ def split_username_region_locale(string: str) -> Tuple[str, str, str]:
     if len(s) == 3:
         return (s[0], s[1], s[2])
     else:
+        logging.debug(f"split_username_region_locale: malformed input '{string}' – using Dutch fallback")
         return (s[0], 'nl', 'nl-NL')
-
-
-def token_key(username: str, password: str) -> str:
-    key = sha256(
-        b"~".join([username.encode("utf-8"), password.encode("utf-8")])
-    ).hexdigest()
-    return key
 
 
 @app.route("/feed/<string:username>/<string:password>/<string:podcast_id>.xml")
@@ -336,8 +341,7 @@ async def serve_feed(username: str, password: str, podcast_id: str, region: str,
     # Check if it is a valid podcast id string
     if podcast_id_pattern.fullmatch(podcast_id) is None:
         return Response("Invalid podcast id format", 400, {})
-   
-    if region not in [region_code for (region_code, _) in REGIONS]:
+    if region not in [rc for (rc, _) in REGIONS]:
         return Response("Invalid region", 400, {})
     if locale not in LOCALES:
         return Response("Invalid locale", 400, {})
@@ -348,7 +352,7 @@ async def serve_feed(username: str, password: str, podcast_id: str, region: str,
         return Response("Podcast is gone", 410, {}) 
     
     with cloudscraper.create_scraper() as scraper:
-        scraper.proxies = proxies
+        scraper.proxies = app_state.proxies
         client = await check_auth(username, password, region, locale, scraper)
         if not client:
             return authenticate()
@@ -395,13 +399,14 @@ async def urlHeadInfo(session: ClientSession, id: str, url: str, locale: str) ->
                 cache.insertIntoHeadCache(id, content_length, content_type)
                 return (content_length, content_type)
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, ClientError) as e:
             if attempt < retries - 1:
                 logging.info(f"Retrying HEAD request to {url} (Attempt {attempt + 2})")
                 await asyncio.sleep(1)  # Wait for 1 second before retrying
             else:
-                logging.error(f"All retries failed for HEAD request to {url}")
-                raise  # Re-raise the last exception if all retries fail
+                logging.error(f"All retries failed for HEAD request to {url}: {e}")
+                # Return defaults without caching; next request can retry
+                return ('0', 'audio/mpeg')
 
 
 
@@ -579,9 +584,8 @@ async def spawn_web_server():
 
 async def main():
     if HTTP_PROXY:
-        global proxies
         logging.info(f"Running with https proxy defined in environmental variable HTTP_PROXY: {HTTP_PROXY}")
-        proxies['https'] = HTTP_PROXY
+        app_state.proxies['https'] = HTTP_PROXY
     tasks = [spawn_web_server()]
     await asyncio.gather(*tasks)
 

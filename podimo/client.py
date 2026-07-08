@@ -18,10 +18,8 @@
 # permissions and limitations under the Licence.
 
 from http.cookiejar import CookieJar
+from podimo.utils import is_correct_email_address, token_key, randomFlyerId, generateHeaders as gHdrs, async_wrap
 from podimo.config import GRAPHQL_URL, SCRAPER_API, ZENROWS_API
-from podimo.utils import (is_correct_email_address, token_key,
-                          randomFlyerId, generateHeaders as gHdrs,
-                          async_wrap)
 from podimo.cache import insertIntoPodcastCache, getCacheEntry, podcast_cache
 from time import time
 import logging
@@ -267,6 +265,8 @@ class PodimoClient:
             }
             result = await self.post(headers, query, variables, scraper, operation_name="ChannelEpisodesQuery")
             if offset == 0:
+                if result.get("podcast") is None:
+                    raise PodcastNotFoundError(f"Podcast {podcast_id} not found")
                 podcastName = self.getPodcastName(result)
                 logging.debug(f"Fetched podcast '{podcastName}' ({podcast_id}) directly")
                 fullResult = result

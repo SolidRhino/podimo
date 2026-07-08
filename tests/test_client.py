@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
+from http.cookiejar import CookieJar
 from podimo.client import PodimoClient
 from podimo.utils import token_key
 import asyncio
@@ -61,6 +62,25 @@ class TestGetPodcastName:
         client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
         data = {"podcast": {}}
         assert client.getPodcastName(data) == "Unknown"
+
+class TestGetPodcasts:
+    """Test getPodcasts response handling."""
+
+    @pytest.mark.asyncio
+    async def test_null_podcast_raises_not_found(self):
+        """Regression: podcast=null with empty episodes should raise PodcastNotFoundError.
+
+        Previously this returned {'podcast': None, 'episodes': []}, which then
+        crashed podcastsToRss with AttributeError and produced a generic 500
+        instead of the intended 404. The bad result was also cached.
+        """
+        from podimo.client import PodcastNotFoundError
+        client = PodimoClient("user@example.com", "secret", "nl", "nl-NL")
+        client.token = "fake-token"
+        client.cookie_jar = CookieJar()
+        client.post = AsyncMock(return_value={"podcast": None, "episodes": []})
+        with pytest.raises(PodcastNotFoundError):
+            await client.getPodcasts("09c55c96-9b1b-456e-bdf2-3abed3b61db5", AsyncMock())
 
 
 class TestTokenKey:

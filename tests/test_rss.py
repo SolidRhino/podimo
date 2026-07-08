@@ -116,6 +116,35 @@ class TestUrlHeadInfo:
         result = await urlHeadInfo(mock_session, "test-head-id2", "https://example.com/audio-noext", "nl-NL")
         assert result == ("4096", "audio/x-m4a")
 
+    @pytest.mark.asyncio
+    async def test_connection_error_falls_back_without_caching(self):
+        """Should fall back to defaults without caching on aiohttp.ClientError.
+
+        Regression: previously only asyncio.TimeoutError was retried; a
+        ClientError (connection reset, DNS failure) propagated and killed the
+        whole feed build. Now it retries, then returns ('0','audio/mpeg')
+        without inserting into head_cache (so the next request can retry).
+        """
+        import podimo.cache as cache
+        from aiohttp import ClientError
+        from unittest.mock import patch, AsyncMock
+
+        ep_id = "test-head-conn-err"
+        if ep_id in cache.head_cache:
+            del cache.head_cache[ep_id]
+
+        mock_session = MagicMock()
+        mock_session.head = MagicMock(side_effect=ClientError("connection reset"))
+
+        with patch("main.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            result = await urlHeadInfo(mock_session, ep_id, "https://example.com/audio.mp3", "nl-NL")
+
+        assert result == ("0", "audio/mpeg")
+        # Retried 3 times total (2 sleeps between retries)
+        assert mock_session.head.call_count == 3
+        # Must NOT cache the transient failure
+        assert cache.getHeadEntry(ep_id) is None
+
 
 class TestAddFeedEntry:
     """Test RSS entry generation for a single episode."""

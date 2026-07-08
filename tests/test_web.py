@@ -146,6 +146,24 @@ class TestWebRoutes:
             )
             assert response.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_serve_basic_auth_feed_invalid_region_valid_locale(self):
+        """Feed endpoint with invalid region but valid locale should return 400.
+
+        Regression test: the region guard was previously dead code (orphaned
+        inside the podcast-id check), so only locale validation caught bad
+        regions. This test isolates region validation with a valid locale.
+        """
+        async with app.test_client() as client:
+            response = await client.get(
+                '/feed/09c55c96-9b1b-456e-bdf2-3abed3b61db5.xml',
+                # user@example.com,badregion,nl-NL:pass
+                headers={'Authorization': 'Basic dXNlckBleGFtcGxlLmNvbSxiYWRyZWdpb24sbmwtTkw6cGFzcw=='}
+            )
+            assert response.status_code == 400
+            body = await response.get_data()
+            assert b'Invalid region' in body
+
 
 class TestPodcastIdRegex:
     """Test the tightened UUID regex."""
