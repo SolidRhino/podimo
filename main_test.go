@@ -25,16 +25,16 @@ func setupTestApp(t *testing.T) *App {
 	headCache, _ := podimo.NewFileCache(dir + "/head")
 
 	cfg := &Config{
-		Hostname:         "localhost:12104",
-		BindHost:         "127.0.0.1:12104",
-		Protocol:         "http",
-		CacheDir:         dir,
-		Locales:          []string{"nl-NL", "en-US"},
-		Regions:          []Region{{Code: "nl", Name: "Nederland"}, {Code: "en", Name: "International"}},
-		Blocked:          make(map[string]struct{}),
-		TokenCacheTime:   time.Hour,
-		PodcastCacheTime: time.Hour,
-		HeadCacheTime:    time.Hour,
+		Hostname:          "localhost:12104",
+		BindHost:          "127.0.0.1:12104",
+		Protocol:          "http",
+		CacheDir:          dir,
+		Locales:           []string{"nl-NL", "en-US"},
+		Regions:           []Region{{Code: "nl", Name: "Nederland"}, {Code: "en", Name: "International"}},
+		Blocked:           make(map[string]struct{}),
+		TokenCacheTime:    time.Hour,
+		PodcastCacheTime:  time.Hour,
+		HeadCacheTime:     time.Hour,
 		StoreTokensOnDisk: true,
 	}
 
@@ -86,8 +86,18 @@ func TestIndexHandler(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "Podimo-to-RSS converter") {
+	body := rr.Body.String()
+	if !strings.Contains(body, "Podimo-to-RSS converter") {
 		t.Fatalf("expected form title")
+	}
+	if !strings.Contains(body, `name="q"`) {
+		t.Errorf("expected search input name=\"q\", got body:\n%s", body)
+	}
+	if !strings.Contains(body, `hx-include="[name='region'], [name='locale']"`) {
+		t.Errorf("expected region/locale wired into hx-include, got body:\n%s", body)
+	}
+	if !strings.Contains(body, "email.value + ',' + regionVal + ',' + localeVal") {
+		t.Errorf("expected Basic-auth username to carry region/locale in JS, got body:\n%s", body)
 	}
 }
 
@@ -236,7 +246,7 @@ func TestHandleFeedPath(t *testing.T) {
 	}
 }
 
-func TestHandleFeed_InvalidUUID(t*testing.T) {
+func TestHandleFeed_InvalidUUID(t *testing.T) {
 	app := setupTestApp(t)
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/not-a-uuid.xml", nil)
@@ -582,4 +592,3 @@ public_feeds: true
 		t.Error("public_feeds: expected true")
 	}
 }
-

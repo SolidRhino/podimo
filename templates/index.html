@@ -54,12 +54,13 @@
 
     <h2>🔍 Search for a podcast</h2>
     <label for="search_query">Search by name</label>
-    <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2"
+    <input type="text" placeholder="e.g. De Staat van Stasse" name="q" id="search_query" minlength="2"
            hx-get="/search" hx-target="#searchResults"
-           hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']">
+           hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']"
+           hx-include="[name='region'], [name='locale']">
     <button type="button" id="searchBtn" class="btn-secondary"
             hx-get="/search" hx-target="#searchResults"
-            hx-include="[name='search_query']" hx-trigger="click">
+            hx-include="[name='q'], [name='region'], [name='locale']" hx-trigger="click">
       Search
     </button>
     <div id="searchResults" class="search-results"></div>
@@ -69,7 +70,7 @@
     <h2>📻 Your Subscriptions</h2>
     <button type="button" class="btn-secondary"
             hx-get="/subscriptions" hx-target="#subscriptionsResults"
-            hx-trigger="click">
+            hx-include="[name='region'], [name='locale']" hx-trigger="click">
       Show subscriptions
     </button>
     <div id="subscriptionsResults" class="search-results"></div>
@@ -116,10 +117,13 @@
     document.addEventListener('htmx:configRequest', function(evt) {
       var email = document.getElementById('email');
       var password = document.getElementById('password');
+      var region = document.getElementById('region');
+      var locale = document.getElementById('locale');
       if (email && password && email.value && password.value) {
-        evt.detail.headers['Authorization'] = 'Basic ' + btoa(
-          encodeURIComponent(email.value) + ':' + encodeURIComponent(password.value)
-        );
+        var regionVal = region ? region.value : 'nl';
+        var localeVal = locale ? locale.value : 'nl-NL';
+        var userPart = email.value + ',' + regionVal + ',' + localeVal;
+        evt.detail.headers['Authorization'] = 'Basic ' + btoa(userPart + ':' + password.value);
       }
     });
 {{ end }}
