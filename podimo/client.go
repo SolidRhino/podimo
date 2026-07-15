@@ -124,7 +124,7 @@ func (c *PodimoClient) generateHeaders(authorization string) map[string]string {
 }
 
 func RandomHexID(length int) string {
-	const hexChars = "1234567890abcdef"
+	const hexChars = "0123456789abcdef"
 	b := make([]byte, length)
 	for i := range b {
 		b[i] = hexChars[rand.IntN(len(hexChars))]
@@ -378,9 +378,6 @@ func podcastDataFromCache(cached interface{}) *PodcastData {
 	}
 	if d, ok := cached.(*PodcastData); ok {
 		return d
-	}
-	if d, ok := cached.(PodcastData); ok {
-		return &d
 	}
 	if m, ok := cached.(map[string]interface{}); ok {
 		data, err := json.Marshal(m)

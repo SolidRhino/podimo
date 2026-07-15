@@ -2,7 +2,7 @@
 <p><a href="{{ .URL }}" id="feed-url">{{ .URL }}</a></p>
 
 <div x-data="{ copied: false }">
-  <button type="button" class="btn-primary"
+  <button type="button"
           @click="navigator.clipboard.writeText('{{ .URL }}').then(() => { copied = true; setTimeout(() => copied = false, 2000) })">
     <span x-text="copied ? 'Copied!' : 'Copy to clipboard'"></span>
   </button>

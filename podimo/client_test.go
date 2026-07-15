@@ -68,7 +68,7 @@ func TestPodimoClient_Login(t *testing.T) {
 		{"userOnboardingFlow": map[string]interface{}{"id": "oid"}},
 		{"tokenWithCredentials": map[string]interface{}{"token": "final"}},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -92,7 +92,7 @@ func TestPodimoClient_Login_InvalidCredentials(t *testing.T) {
 		{"userOnboardingFlow": map[string]interface{}{"id": "oid"}},
 		{"tokenWithCredentials": nil},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -111,7 +111,7 @@ func TestPodimoClient_GetPodcasts_Cache(t *testing.T) {
 		{"tokenWithCredentials": map[string]interface{}{"token": "final"}},
 		{"podcast": map[string]interface{}{"title": "Test"}, "episodes": []interface{}{}},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -146,7 +146,7 @@ func TestPodimoClient_SearchPodcasts(t *testing.T) {
 			map[string]interface{}{"id": "p1", "title": "Podcast 1"},
 		}},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -174,7 +174,7 @@ func TestPodimoClient_SearchPodcasts_AllVariantsFail(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -199,7 +199,7 @@ func TestPodimoClient_GetFollowedPodcasts(t *testing.T) {
 			map[string]interface{}{"id": "p1", "title": "Followed"},
 		}},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)
@@ -234,7 +234,7 @@ func TestGetPodcasts_GQLErrorNotFound(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
 	pc, _ := NewFileCache(dir)

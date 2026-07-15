@@ -23,9 +23,9 @@ func (t *failNTimesTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return t.base.RoundTrip(req)
 }
 
-func TestChunks(t *testing.T) {
-	items := []interface{}{1, 2, 3, 4, 5, 6, 7}
-	result := chunks(items, 3)
+func TestChunkEpisodes(t *testing.T) {
+	items := []Episode{{}, {}, {}, {}, {}, {}, {}}
+	result := chunkEpisodes(items, 3)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 chunks, got %d", len(result))
 	}
@@ -80,7 +80,7 @@ func TestURLHeadInfo_Network(t *testing.T) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
@@ -104,7 +104,7 @@ func TestURLHeadInfo_RetrySuccess(t *testing.T) {
 		w.Header().Set("Content-Type", "audio/mp4")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	client := srv.Client()
 	base := client.Transport
@@ -134,7 +134,7 @@ func TestURLHeadInfo_RetryExhausted(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	client := srv.Client()
 	base := client.Transport
@@ -182,7 +182,7 @@ func TestPodcastsToRss_Basic(t *testing.T) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	xml, err := PodcastsToRss(context.Background(), "12345678-1234-1234-1234-123456789abc", data, "en-US", hc, false, time.Hour, srv.Client(), nil)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestURLHeadInfo_ContextCancel(t *testing.T) {
 		}
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	client := srv.Client()
 	base := client.Transport
@@ -267,7 +267,7 @@ func TestURLHeadInfo_404NoCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
@@ -287,7 +287,7 @@ func TestURLHeadInfo_500RetriesThenFails(t *testing.T) {
 		calls++
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
@@ -315,7 +315,7 @@ func TestURLHeadInfo_500Then200Retries(t *testing.T) {
 		w.Header().Set("Content-Type", "audio/mpeg")
 		w.WriteHeader(200)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)

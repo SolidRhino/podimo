@@ -140,14 +140,12 @@ func buildFeedItem(ctx context.Context, episode Episode, locale string, headCach
 	headCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	contentLength, contentType, err := URLHeadInfo(headCtx, httpClient, episode.ID, url, headers, headCache, headCacheTTL, logger)
-	if err != nil {
-		// Graceful fallback: use defaults so one bad HEAD doesn't abort the whole feed
-		contentLength = "0"
-		contentType = "audio/mpeg"
+	if err != nil && logger != nil {
+		logger.Debug("HEAD request failed, using safe defaults", "episode_id", episode.ID, "error", err)
 	}
 
 	lengthInt, _ := strconv.ParseInt(contentLength, 10, 64)
-	if lengthInt <= 0 {
+	if lengthInt < 0 {
 		lengthInt = 0
 	}
 
@@ -265,18 +263,6 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 	}
 
 	return "0", "audio/mpeg", fmt.Errorf("all retries failed for HEAD %s", urlStr)
-}
-
-func chunks(items []interface{}, n int) [][]interface{} {
-	var out [][]interface{}
-	for i := 0; i < len(items); i += n {
-		end := i + n
-		if end > len(items) {
-			end = len(items)
-		}
-		out = append(out, items[i:end])
-	}
-	return out
 }
 
 func chunkEpisodes(items []Episode, n int) [][]Episode {

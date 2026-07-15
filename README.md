@@ -32,9 +32,9 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 📻 **Your subscriptions** — After logging in, view all podcasts you follow and generate feeds with one click.
 
-🩺 **Health endpoint** — A lightweight `/health` probe for Docker and Kubernetes orchestration.
+🩺 **Health endpoint** — A lightweight `/health` probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK` (works on the `scratch` base image with no shell).
 
-🚀 **Single static binary** — Rewritten in Go, compiles to one executable with no runtime dependencies.
+🚀 **Single static binary** — Rewritten in Go, compiles to one executable with no runtime dependencies, packaged in a zero-attack-surface `scratch` Docker image.
 
 🧪 **CI/CD** — GitHub Actions run tests and publish Docker images automatically.
 
@@ -105,6 +105,7 @@ docker compose up -d
 The `docker-compose.yml` includes:
 - Persistent cache volume (`podimo-cache`)
 - Auto-restart on failure
+- Built-in health check (`/podimo-rss healthcheck`)
 
 ### Updating the container
 
@@ -116,10 +117,8 @@ docker stop podimo-rss && docker rm podimo-rss
 
 Or with Docker Compose:
 
-```sh
-docker compose pull
+docker compose build --pull
 docker compose up -d
-```
 
 ### Environment files
 

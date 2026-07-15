@@ -94,6 +94,9 @@ func (r *RateLimiter) Allow(ip string) bool {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
+	}
 	configFile := flag.String("config", "", "path to YAML config file")
 	flag.Parse()
 
@@ -242,11 +245,40 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
 }
 
+// runHealthcheck probes the local /health endpoint. Returns 0 on HTTP 200, 1
+// otherwise. It reads PODIMO_BIND_HOST (the same env var the server uses),
+// defaults to 127.0.0.1:12104, and normalizes wildcard bind hosts (0.0.0.0,
+// ::, and empty host) to 127.0.0.1 so the probe connects via loopback.
+// Side-effect-free: it does not load full config.
+func runHealthcheck() int {
+	addr := os.Getenv("PODIMO_BIND_HOST")
+	if addr == "" {
+		addr = "127.0.0.1:12104"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 1
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/health")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
 			"Error": "Query must be at least 2 characters",
 		})
 		return
@@ -269,7 +301,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
 			"Error": "Authentication required",
 		})
 		return
@@ -286,14 +318,14 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.logger.Error("Search error", "error", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
 			"Error": "Search failed. Podimo may have changed their API.",
 		})
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
+	a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
 		"Results": results,
 		"Query":   searchQuery,
 	})
@@ -317,7 +349,7 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
 			"Error": "Authentication required",
 		})
 		return
@@ -334,14 +366,14 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
 			"Error": "Failed to fetch subscriptions",
 		})
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]interface{}{
+	a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
 		"Results": results,
 	})
 }
@@ -529,20 +561,20 @@ func (a *App) checkAuth(ctx context.Context, username, password, region, locale 
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err != nil {
-			a.renderIndex(w, r, "Invalid form data", "")
+			a.renderIndex(w, "Invalid form data", "")
 			return
 		}
 
 		podcastID := r.FormValue("podcast_id")
 		if podcastID == "" {
-			a.renderIndex(w, r, "Podcast ID is required", "")
+			a.renderIndex(w, "Podcast ID is required", "")
 			return
 		}
 
 		if !podcastIDPattern.MatchString(podcastID) {
 			match := urlUUIDPattern.FindString(podcastID)
 			if match == "" {
-				a.renderIndex(w, r, "Podcast ID is not valid", "")
+				a.renderIndex(w, "Podcast ID is not valid", "")
 				return
 			}
 			podcastID = match
@@ -550,13 +582,13 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 		region := r.FormValue("region")
 		if !a.cfg.isValidRegion(region) {
-			a.renderIndex(w, r, "Region is not valid", "")
+			a.renderIndex(w, "Region is not valid", "")
 			return
 		}
 
 		locale := r.FormValue("locale")
 		if !a.cfg.isValidLocale(locale) {
-			a.renderIndex(w, r, "Locale is not valid", "")
+			a.renderIndex(w, "Locale is not valid", "")
 			return
 		}
 
@@ -570,11 +602,11 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 			feedURL = fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
 				a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
 		}
-		a.renderFeedLocation(w, r, feedURL)
+		a.renderFeedLocation(w, feedURL)
 		return
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Regions":         a.cfg.Regions,
 		"Locales":         a.cfg.Locales,
 		"NeedCredentials": !a.cfg.LocalCredentials,
@@ -585,8 +617,8 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) renderIndex(w http.ResponseWriter, r *http.Request, errorMsg, podcastID string) {
-	data := map[string]interface{}{
+func (a *App) renderIndex(w http.ResponseWriter, errorMsg, podcastID string) {
+	data := map[string]any{
 		"Error":           errorMsg,
 		"Regions":         a.cfg.Regions,
 		"Locales":         a.cfg.Locales,
@@ -599,8 +631,8 @@ func (a *App) renderIndex(w http.ResponseWriter, r *http.Request, errorMsg, podc
 	}
 }
 
-func (a *App) renderFeedLocation(w http.ResponseWriter, r *http.Request, feedURL string) {
-	data := map[string]interface{}{
+func (a *App) renderFeedLocation(w http.ResponseWriter, feedURL string) {
+	data := map[string]any{
 		"URL": feedURL,
 	}
 	if err := a.templates.ExecuteTemplate(w, "feed_location.html", data); err != nil {

@@ -45,7 +45,6 @@ format:
 clean:
     rm -f {{binary}}
     rm -rf cache/
-    {{go_cmd}} clean
     echo "Cleaned up development artifacts"
 
 # --- Docker targets ---
@@ -66,7 +65,7 @@ docker-run: docker-build
             -e PODIMO_BIND_HOST=0.0.0.0:12104 \
             -p 12104:12104 \
             -v "$PWD/cache:/tmp/podimo-rss-cache" \
-            -v "$PWD/config.yaml:/src/config.yaml:ro" \
+            -v "$PWD/config.yaml:/etc/podimo-rss/config.yaml:ro" \
             {{docker_image}}:latest
     else
         docker run -d \

@@ -78,6 +78,55 @@ func TestHealthHandler(t *testing.T) {
 	}
 }
 
+func TestRunHealthcheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	t.Setenv("PODIMO_BIND_HOST", addr)
+	if code := runHealthcheck(); code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+}
+
+func TestRunHealthcheck_Unreachable(t *testing.T) {
+	t.Setenv("PODIMO_BIND_HOST", "127.0.0.1:1")
+	if code := runHealthcheck(); code != 1 {
+		t.Fatalf("expected exit 1 for unreachable, got %d", code)
+	}
+}
+
+func TestRunHealthcheck_ZeroZeroZeroZeroNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	addr = strings.Replace(addr, "127.0.0.1", "0.0.0.0", 1)
+	t.Setenv("PODIMO_BIND_HOST", addr)
+	if code := runHealthcheck(); code != 0 {
+		t.Fatalf("expected exit 0 with 0.0.0.0 normalization, got %d", code)
+	}
+}
+
+func TestRunHealthcheck_EmptyHostNormalized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	addr = ":" + strings.SplitN(addr, ":", 2)[1]
+	t.Setenv("PODIMO_BIND_HOST", addr)
+	if code := runHealthcheck(); code != 0 {
+		t.Fatalf("expected exit 0 with empty host normalization, got %d", code)
+	}
+}
+
 func TestIndexHandler(t *testing.T) {
 	app := setupTestApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -165,7 +214,7 @@ func TestHandleFeed(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	app.cfg.LocalCredentials = true
@@ -224,7 +273,7 @@ func TestHandleFeedPath(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	// URL-embedded credentials mode
@@ -288,7 +337,7 @@ func TestHandleSearch(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	app.cfg.LocalCredentials = true
@@ -325,7 +374,7 @@ func TestHandleSubscriptions(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	app.cfg.LocalCredentials = true
@@ -357,7 +406,7 @@ func TestHandleFeed_AuthError(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	app.cfg.LocalCredentials = true
@@ -386,7 +435,7 @@ func TestHandleFeedPath_AuthError(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	key := podimo.TokenKey("user", "pass")
@@ -454,7 +503,7 @@ func TestCheckAuth_StoreTokensOnDiskFalse(t *testing.T) {
 		{"userOnboardingFlow": map[string]interface{}{"id": "oid"}},
 		{"tokenWithCredentials": map[string]interface{}{"token": "final"}},
 	})
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestApp(t)
 	app.cfg.StoreTokensOnDisk = false
@@ -692,7 +741,7 @@ func TestHandleFeed_StaleTokenRetry(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 
 	app := setupTestAppWithMock(t, srv.URL)
 	app.cfg.LocalCredentials = true

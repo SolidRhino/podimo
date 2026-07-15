@@ -15,7 +15,7 @@ func TestGraphQLClient_Query_Non200(t *testing.T) {
 		w.WriteHeader(500)
 		w.Write([]byte("server error"))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
 	var result map[string]interface{}
 	err := c.Query(context.Background(), nil, "query {}", nil, &result)
@@ -34,7 +34,7 @@ func TestGraphQLClient_Query_GraphQLError(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
 	var result map[string]interface{}
 	err := c.Query(context.Background(), nil, "query {}", nil, &result)
@@ -56,7 +56,7 @@ func TestGraphQLClient_Query_Success(t *testing.T) {
 			},
 		})
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
 	var result map[string]interface{}
 	err := c.Query(context.Background(), nil, "query {}", nil, &result)
@@ -77,7 +77,7 @@ func TestGraphQLClient_Query_LargeResponse(t *testing.T) {
 		w.Write(bytes.Repeat([]byte("x"), 11*1024*1024))
 		w.Write([]byte("}}"))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
 	var result map[string]interface{}
 	err := c.Query(context.Background(), nil, "query {}", nil, &result)

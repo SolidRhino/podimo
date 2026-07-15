@@ -65,6 +65,8 @@ main_test.go     → Handler tests (health, index, feed, search, subscriptions, 
 | `static/style.css` | External stylesheet with dark mode support. |
 | `config.example.yaml` | Reference configuration file. Documented flat-YAML schema with all options and defaults. Copy to `config.yaml` to customize. |
 | `podimo/boundedmap.go` | `BoundedMap` - generic in-memory LRU cache with optional TTL and background cleanup. Used for per-user `http.Client` pools and rate-limiter IP tracking. |
+| `Dockerfile` | Multi-stage build: `golang:1.26-alpine` builder → `scratch` runtime (zero attack surface: no shell, no package manager, no libs). Bundles CA certs for outbound HTTPS, runs as nonroot UID 65532, and declares `HEALTHCHECK CMD ["/podimo-rss", "healthcheck"]` using the built-in subcommand (no curl/shell needed). |
+| `docker-compose.yml` | Compose stack with `podimo-cache` named volume, `PODIMO_BIND_HOST=0.0.0.0:12104`, and a `healthcheck` block mirroring the Dockerfile `HEALTHCHECK`. |
 
 ## Authentication Flow (Podimo GraphQL)
 
@@ -209,6 +211,8 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 ### Health Check Endpoint
 A lightweight `/health` endpoint returns `{"status":"ok","service":"podimo-rss"}`. This is used by Docker `HEALTHCHECK` and orchestration tools (Kubernetes, Docker Compose, etc.). The endpoint has no external dependencies and should always return 200.
 
+The `scratch` runtime image has no shell or `curl`, so the Dockerfile `HEALTHCHECK` invokes a built-in `healthcheck` subcommand (`/podimo-rss healthcheck`) that probes the same `/health` endpoint via loopback. It reads `PODIMO_BIND_HOST` from the environment (defaulting to `127.0.0.1:12104`, normalizing wildcard bind hosts `0.0.0.0`, `::`, and empty host to `127.0.0.1`) and exits 0 on HTTP 200, 1 otherwise. It is side-effect-free (no config load, no cache I/O).
+
 ```go
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
@@ -281,7 +285,7 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ✅ **FIXED** - Block list using substring matching (now exact match via `map[string]struct{}`)
 ✅ **FIXED** - No rate limiting (added per-IP limit: 8 req/10s)
 ✅ **FIXED** - CORS wildcard on all responses (removed)
-✅ **FIXED** — Docker running as root with build deps (now multi-stage `golang:1.26-alpine` builder → `distroless/static-debian13:nonroot` runtime)
+✅ **FIXED** — Docker running as root with build deps (now multi-stage `golang:1.26-alpine` builder → `scratch` runtime with CA certs, nonroot UID 65532, and built-in `healthcheck` subcommand for `HEALTHCHECK`)
 ✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)
 ✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` types)
 ✅ **FIXED** — Logging only at request start (now logs both start and end with duration + status code)

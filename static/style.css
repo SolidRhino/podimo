@@ -313,20 +313,6 @@ hr {
   margin: var(--space-lg) 0;
 }
 
-.copy-feedback {
-  display: inline-block;
-  color: var(--accent);
-  font-weight: 500;
-  margin-left: var(--space-sm);
-  font-size: 1rem;
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-
-.copy-feedback.visible {
-  opacity: 1;
-}
-
 .qrcode {
   margin: var(--space-lg) 0;
 }
