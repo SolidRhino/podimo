@@ -14,6 +14,9 @@ vendor/
 # Caches
 cache/
 *.cache
+# Python (pre-rewrite leftovers)
+__pycache__/
+*.pyc
 
 # IDE
 .vscode/
