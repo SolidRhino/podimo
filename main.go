@@ -120,7 +120,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	tokenCache, err := podimo.NewFileCache(filepath.Join(cfg.CacheDir, "tokens_cache"))
+	tokenCache, err := podimo.NewSecureFileCache(filepath.Join(cfg.CacheDir, "tokens_cache"))
 	if err != nil {
 		logger.Error("Failed to create token cache", "error", err)
 		os.Exit(1)

@@ -12,6 +12,8 @@ import (
 type FileCache struct {
 	dir      string
 	keyLocks *BoundedMap[string, *sync.Mutex]
+	dirMode  os.FileMode
+	fileMode os.FileMode
 }
 
 type cacheEntry struct {
@@ -23,12 +25,35 @@ func NewFileCache(dir string) (*FileCache, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
-	return &FileCache{
-		dir: dir,
+	c := &FileCache{
+		dir:      dir,
+		dirMode:  0755,
+		fileMode: 0644,
 		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
 			MaxSize: 0, // unbounded to avoid evicting live mutexes
 		}),
-	}, nil
+	}
+	_ = os.Chmod(dir, c.dirMode)
+	return c, nil
+}
+
+// NewSecureFileCache creates a FileCache with restrictive permissions (0700 dir,
+// 0600 files) suitable for storing sensitive data such as Podimo auth tokens.
+// Pre-existing dirs/files with looser perms are migrated via chmod.
+func NewSecureFileCache(dir string) (*FileCache, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create cache dir: %w", err)
+	}
+	c := &FileCache{
+		dir:      dir,
+		dirMode:  0700,
+		fileMode: 0600,
+		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
+			MaxSize: 0, // unbounded to avoid evicting live mutexes
+		}),
+	}
+	_ = os.Chmod(dir, c.dirMode)
+	return c, nil
 }
 
 func (c *FileCache) getKeyLock(key string) *sync.Mutex {
@@ -72,5 +97,9 @@ func (c *FileCache) Set(key string, value interface{}, ttl time.Duration) error 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, c.fileMode); err != nil {
+		return err
+	}
+	_ = os.Chmod(path, c.fileMode)
+	return nil
 }
