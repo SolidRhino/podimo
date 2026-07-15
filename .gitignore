@@ -14,9 +14,16 @@ vendor/
 # Caches
 cache/
 *.cache
+
 # Python (pre-rewrite leftovers)
 __pycache__/
 *.pyc
+.mypy_cache/
+.pytest_cache/
+.pi/
+
+# Planning artifacts
+.rpiv/
 
 # IDE
 .vscode/
