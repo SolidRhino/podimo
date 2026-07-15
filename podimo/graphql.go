@@ -40,6 +40,15 @@ type GQLError struct {
 
 func (e GQLError) Error() string { return "graphql: " + e.Message }
 
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("graphql: non-200 status: %d, body: %s", e.StatusCode, e.Body)
+}
+
 func (c *GraphQLClient) Query(ctx context.Context, headers map[string]string, query string, variables map[string]interface{}, resp interface{}) error {
 	body := gqlRequest{Query: query, Variables: variables}
 	var buf bytes.Buffer
@@ -77,7 +86,7 @@ func (c *GraphQLClient) Query(ctx context.Context, headers map[string]string, qu
 		if len(body) > 500 {
 			body = body[:500]
 		}
-		return fmt.Errorf("graphql: non-200 status: %d, body: %s", res.StatusCode, body)
+		return &HTTPStatusError{StatusCode: res.StatusCode, Body: string(body)}
 	}
 
 	var gr gqlResponse

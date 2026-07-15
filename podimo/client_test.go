@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -261,5 +262,25 @@ func TestGetPodcasts_NetworkErrorNot404(t *testing.T) {
 	}
 	if _, ok := err.(*PodcastNotFoundError); ok {
 		t.Fatalf("network error must not be misclassified as PodcastNotFoundError")
+	}
+}
+
+func TestMapAuthError_HTTP401(t *testing.T) {
+	err := &HTTPStatusError{StatusCode: 401, Body: "unauthorized"}
+	mapped := mapAuthError(err)
+	authErr, ok := mapped.(*AuthenticationError)
+	if !ok {
+		t.Fatalf("expected *AuthenticationError, got %T", mapped)
+	}
+	if !strings.Contains(authErr.Error(), "401") {
+		t.Fatalf("expected error to mention 401, got %s", authErr.Error())
+	}
+}
+
+func TestMapAuthError_NonAuthHTTPStatus(t *testing.T) {
+	err := &HTTPStatusError{StatusCode: 500, Body: "server error"}
+	mapped := mapAuthError(err)
+	if _, ok := mapped.(*AuthenticationError); ok {
+		t.Fatalf("500 must not be promoted to AuthenticationError")
 	}
 }

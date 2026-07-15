@@ -12,10 +12,12 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/SolidRhino/podimo-rss/podimo"
@@ -46,6 +48,7 @@ type App struct {
 	podcastCache *podimo.FileCache
 	headCache    *podimo.FileCache
 	clients      *podimo.BoundedMap[string, *http.Client]
+	logLevel     *slog.LevelVar
 }
 
 type RateLimiter struct {
@@ -106,12 +109,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	logLevel := slog.LevelInfo
+	var logLevel slog.LevelVar
 	if cfg.Debug {
-		logLevel = slog.LevelDebug
+		logLevel.Set(slog.LevelDebug)
+	} else {
+		logLevel.Set(slog.LevelInfo)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
+		Level: &logLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.Attr{
@@ -155,6 +160,7 @@ func main() {
 		tokenCache:   tokenCache,
 		podcastCache: podcastCache,
 		headCache:    headCache,
+		logLevel:     &logLevel,
 		clients: podimo.NewBoundedMap[string, *http.Client](podimo.BoundedMapOptions{
 			MaxSize:         100,
 			TTL:             cfg.TokenCacheTime,
@@ -181,9 +187,29 @@ func main() {
 		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
-	if err := server.ListenAndServe(); err != nil {
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
 		logger.Error("Server failed", "error", err)
 		os.Exit(1)
+	case sig := <-sigCh:
+		logger.Info("Shutting down", "signal", sig)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Error("Graceful shutdown failed", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("Server stopped")
 	}
 }
 
@@ -277,10 +303,7 @@ func runHealthcheck() int {
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
-			"Error": "Query must be at least 2 characters",
-		})
+		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Query must be at least 2 characters"})
 		return
 	}
 
@@ -300,13 +323,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
-			"Error": "Authentication required",
-		})
+		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
-
 	results, err := client.SearchPodcasts(r.Context(), searchQuery)
 	if err != nil {
 		if _, ok := err.(*podimo.AuthenticationError); ok {
@@ -317,18 +336,11 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.logger.Error("Search error", "error", err)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
-			"Error": "Search failed. Podimo may have changed their API.",
-		})
+		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Search failed. Podimo may have changed their API."})
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	a.templates.ExecuteTemplate(w, "search_results.html", map[string]any{
-		"Results": results,
-		"Query":   searchQuery,
-	})
+	a.renderPartial(w, "search_results.html", map[string]any{"Results": results, "Query": searchQuery})
 }
 
 func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -348,10 +360,7 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
-			"Error": "Authentication required",
-		})
+		a.renderPartial(w, "subscriptions.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
 
@@ -365,17 +374,11 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
-			"Error": "Failed to fetch subscriptions",
-		})
+		a.renderPartial(w, "subscriptions.html", map[string]any{"Error": "Failed to fetch subscriptions"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	a.templates.ExecuteTemplate(w, "subscriptions.html", map[string]any{
-		"Results": results,
-	})
+	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results})
 }
 
 func (a *App) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -638,6 +641,15 @@ func (a *App) renderFeedLocation(w http.ResponseWriter, feedURL string) {
 	if err := a.templates.ExecuteTemplate(w, "feed_location.html", data); err != nil {
 		a.logger.Error("Template render error", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// renderPartial executes an HTMX partial template, sets the Content-Type header,
+// and logs any render error instead of silently ignoring it.
+func (a *App) renderPartial(w http.ResponseWriter, name string, data map[string]any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.templates.ExecuteTemplate(w, name, data); err != nil {
+		a.logger.Error("Template render error", "template", name, "error", err)
 	}
 }
 

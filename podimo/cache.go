@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sync"
@@ -13,7 +14,7 @@ import (
 type FileCache struct {
 	dir      string
 	mem      *BoundedMap[string, cacheEntry]
-	keyLocks *BoundedMap[string, *sync.Mutex]
+	keyLocks [256]sync.Mutex
 	dirMode  os.FileMode
 	fileMode os.FileMode
 }
@@ -32,9 +33,6 @@ func NewFileCache(dir string) (*FileCache, error) {
 		dirMode:  0755,
 		fileMode: 0644,
 		mem:      NewBoundedMap[string, cacheEntry](BoundedMapOptions{MaxSize: 512}),
-		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
-			MaxSize: 0, // unbounded to avoid evicting live mutexes
-		}),
 	}
 	_ = os.Chmod(dir, c.dirMode)
 	return c, nil
@@ -52,18 +50,15 @@ func NewSecureFileCache(dir string) (*FileCache, error) {
 		dirMode:  0700,
 		fileMode: 0600,
 		mem:      NewBoundedMap[string, cacheEntry](BoundedMapOptions{MaxSize: 512}),
-		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
-			MaxSize: 0, // unbounded to avoid evicting live mutexes
-		}),
 	}
 	_ = os.Chmod(dir, c.dirMode)
 	return c, nil
 }
 
 func (c *FileCache) getKeyLock(key string) *sync.Mutex {
-	return c.keyLocks.GetOrSet(key, func() *sync.Mutex {
-		return &sync.Mutex{}
-	}, 0)
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return &c.keyLocks[h.Sum32()%256]
 }
 
 func (c *FileCache) Get(key string) (interface{}, bool) {

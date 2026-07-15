@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -52,22 +53,27 @@ func mapAuthError(err error) error {
 			return NewAuthenticationError(gqlErr.Message)
 		}
 	}
+	var httpErr *HTTPStatusError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized {
+		return NewAuthenticationError("HTTP 401 from Podimo API")
+	}
 	return err
 }
 
 type PodimoClient struct {
-	username     string
-	password     string
-	region       string
-	locale       string
-	key          string
-	token        string
-	preauthToken string
-	preregID     string
-	graphql      *GraphQLClient
-	tokenCache   *FileCache
-	podcastCache *FileCache
-	logger       *slog.Logger
+	username       string
+	password       string
+	region         string
+	locale         string
+	key            string
+	token          string
+	preauthToken   string
+	preregID       string
+	graphql        *GraphQLClient
+	tokenCache     *FileCache
+	podcastCache   *FileCache
+	logger         *slog.Logger
+	requestTimeout time.Duration
 }
 
 func NewPodimoClient(username, password, region, locale string, graphql *GraphQLClient, tokenCache, podcastCache *FileCache, logger *slog.Logger) (*PodimoClient, error) {
@@ -89,15 +95,16 @@ func NewPodimoClient(username, password, region, locale string, graphql *GraphQL
 	}
 
 	client := &PodimoClient{
-		username:     username,
-		password:     password,
-		region:       region,
-		locale:       locale,
-		key:          key,
-		graphql:      graphql,
-		tokenCache:   tokenCache,
-		podcastCache: podcastCache,
-		logger:       logger,
+		username:       username,
+		password:       password,
+		region:         region,
+		locale:         locale,
+		key:            key,
+		graphql:        graphql,
+		tokenCache:     tokenCache,
+		podcastCache:   podcastCache,
+		logger:         logger,
+		requestTimeout: 15 * time.Second,
 	}
 	if str, ok := storedToken.(string); ok {
 		client.token = str
@@ -107,6 +114,18 @@ func NewPodimoClient(username, password, region, locale string, graphql *GraphQL
 
 func (c *PodimoClient) Token() string { return c.token }
 func (c *PodimoClient) Key() string   { return c.key }
+
+// queryWithTimeout wraps a GraphQL query with a per-request timeout derived from
+// the caller's context. A zero requestTimeout disables the deadline and passes
+// the context through unchanged.
+func (c *PodimoClient) queryWithTimeout(ctx context.Context, headers map[string]string, query string, variables map[string]interface{}, resp interface{}) error {
+	if c.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.requestTimeout)
+		defer cancel()
+	}
+	return c.graphql.Query(ctx, headers, query, variables, resp)
+}
 
 func (c *PodimoClient) generateHeaders(authorization string) map[string]string {
 	headers := map[string]string{
@@ -167,7 +186,7 @@ func (c *PodimoClient) getPreregisterToken(ctx context.Context) error {
 	}
 
 	var result map[string]interface{}
-	if err := c.graphql.Query(ctx, headers, query, variables, &result); err != nil {
+	if err := c.queryWithTimeout(ctx, headers, query, variables, &result); err != nil {
 		return err
 	}
 
@@ -191,7 +210,7 @@ func (c *PodimoClient) getOnboardingID(ctx context.Context) error {
 		}
 	}`
 	var result map[string]interface{}
-	if err := c.graphql.Query(ctx, headers, query, nil, &result); err != nil {
+	if err := c.queryWithTimeout(ctx, headers, query, nil, &result); err != nil {
 		return err
 	}
 
@@ -256,7 +275,7 @@ func (c *PodimoClient) login(ctx context.Context) (string, error) {
 	}
 
 	var result map[string]interface{}
-	if err := c.graphql.Query(ctx, headers, query, variables, &result); err != nil {
+	if err := c.queryWithTimeout(ctx, headers, query, variables, &result); err != nil {
 		return "", err
 	}
 
@@ -273,6 +292,11 @@ func (c *PodimoClient) login(ctx context.Context) (string, error) {
 }
 
 func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheTTL time.Duration) (*PodcastData, error) {
+	if c.token == "" {
+		if _, err := c.Login(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if cached, ok := c.podcastCache.Get(podcastID); ok {
 		if data := podcastDataFromCache(cached); data != nil {
 			return data, nil
@@ -334,7 +358,7 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 		}
 
 		var page PodcastData
-		if err := c.graphql.Query(ctx, headers, query, variables, &page); err != nil {
+		if err := c.queryWithTimeout(ctx, headers, query, variables, &page); err != nil {
 			mapped := mapAuthError(err)
 			if _, ok := mapped.(*AuthenticationError); ok {
 				return nil, mapped
@@ -449,7 +473,7 @@ func (c *PodimoClient) SearchPodcasts(ctx context.Context, query string) ([]Sear
 			Podcasts []SearchResult `json:"podcastsAutocomplete"`
 			Search   []SearchResult `json:"searchPodcasts"`
 		}
-		if err := c.graphql.Query(ctx, headers, variant.query, variant.variables, &result); err != nil {
+		if err := c.queryWithTimeout(ctx, headers, variant.query, variant.variables, &result); err != nil {
 			lastErr = err
 			continue
 		}
@@ -489,7 +513,7 @@ func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]FollowedPodca
 	var result struct {
 		Podcasts []FollowedPodcast `json:"podcastsFollowed"`
 	}
-	if err := c.graphql.Query(ctx, headers, query, nil, &result); err != nil {
+	if err := c.queryWithTimeout(ctx, headers, query, nil, &result); err != nil {
 		return nil, mapAuthError(err)
 	}
 

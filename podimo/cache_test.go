@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -117,4 +118,30 @@ func TestFileCache_SecureMode(t *testing.T) {
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("expected migrated file mode 0600, got %o", info.Mode().Perm())
 	}
+}
+
+func TestFileCache_StripedLockMutualExclusion(t *testing.T) {
+	dir := t.TempDir()
+	c, err := NewFileCache(dir)
+	if err != nil {
+		t.Fatalf("new cache: %v", err)
+	}
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if err := c.Set("shared-key", "value", time.Hour); err != nil {
+				t.Errorf("set: %v", err)
+			}
+			// Get is safe to call concurrently; the race detector proves the
+			// striped lock table prevents data races. Don't assert a hit — a
+			// concurrent Delete may have removed the key between Set and Get.
+			_, _ = c.Get("shared-key")
+			_ = c.Delete("shared-key")
+		}()
+	}
+	wg.Wait()
 }
