@@ -4,11 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"time"
 )
@@ -33,6 +34,25 @@ func NewPodcastNotFoundError(msg string) *PodcastNotFoundError {
 
 func NewAuthenticationError(msg string) *AuthenticationError {
 	return &AuthenticationError{PodimoError{Message: msg}}
+}
+
+// mapAuthError returns an *AuthenticationError if err is a GQLError whose message
+// indicates an auth failure, otherwise it returns err unchanged.
+func mapAuthError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := err.(*AuthenticationError); ok {
+		return err
+	}
+	var gqlErr GQLError
+	if errors.As(err, &gqlErr) {
+		msg := strings.ToLower(gqlErr.Message)
+		if strings.Contains(msg, "unauthorized") || strings.Contains(msg, "unauthenticated") || strings.Contains(msg, "not authorized") {
+			return NewAuthenticationError(gqlErr.Message)
+		}
+	}
+	return err
 }
 
 type PodimoClient struct {
@@ -94,7 +114,7 @@ func (c *PodimoClient) generateHeaders(authorization string) map[string]string {
 		"user-agent":     "Podimo/2.45.1 build 566/Android 33",
 		"user-version":   "2.45.1",
 		"user-locale":    c.locale,
-		"user-unique-id": randomHexID(16),
+		"user-unique-id": RandomHexID(16),
 		"content-type":   "application/json",
 	}
 	if authorization != "" {
@@ -103,18 +123,18 @@ func (c *PodimoClient) generateHeaders(authorization string) map[string]string {
 	return headers
 }
 
-func randomHexID(length int) string {
+func RandomHexID(length int) string {
 	const hexChars = "1234567890abcdef"
 	b := make([]byte, length)
 	for i := range b {
-		b[i] = hexChars[rand.Intn(len(hexChars))]
+		b[i] = hexChars[rand.IntN(len(hexChars))]
 	}
 	return string(b)
 }
 
 func randomFlyerID() string {
-	a := rand.Int63n(8999999999999) + 1000000000000
-	b := rand.Int63n(8999999999999) + 1000000000000
+	a := rand.Int64N(8999999999999) + 1000000000000
+	b := rand.Int64N(8999999999999) + 1000000000000
 	return fmt.Sprintf("%d-%d", a, b)
 }
 
@@ -170,14 +190,8 @@ func (c *PodimoClient) getOnboardingID(ctx context.Context) error {
 			id
 		}
 	}`
-	variables := map[string]interface{}{
-		"locale":      c.locale,
-		"countryCode": c.region,
-		"appsFlyerId": randomFlyerID(),
-	}
-
 	var result map[string]interface{}
-	if err := c.graphql.Query(ctx, headers, query, variables, &result); err != nil {
+	if err := c.graphql.Query(ctx, headers, query, nil, &result); err != nil {
 		return err
 	}
 
@@ -197,7 +211,25 @@ func (c *PodimoClient) Login(ctx context.Context) (string, error) {
 	if c.token != "" {
 		return c.token, nil
 	}
+	return c.login(ctx)
+}
 
+// RefreshToken invalidates the cached token (in-memory and on disk) and performs
+// a fresh login. Used to recover from a stale token that a downstream call
+// rejected with an AuthenticationError.
+func (c *PodimoClient) RefreshToken(ctx context.Context) error {
+	c.token = ""
+	if c.tokenCache != nil {
+		_ = c.tokenCache.Delete(c.key)
+	}
+	_, err := c.login(ctx)
+	return err
+}
+
+// login performs the 3-step preregister → onboarding → authorize flow and stores
+// the resulting token. It assumes the caller has already decided a fresh login
+// is required (no cached-token guard).
+func (c *PodimoClient) login(ctx context.Context) (string, error) {
 	if err := c.getPreregisterToken(ctx); err != nil {
 		return "", err
 	}
@@ -240,10 +272,10 @@ func (c *PodimoClient) Login(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheTTL time.Duration) (map[string]interface{}, error) {
+func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheTTL time.Duration) (*PodcastData, error) {
 	if cached, ok := c.podcastCache.Get(podcastID); ok {
-		if podcast, ok := cached.(map[string]interface{}); ok {
-			return podcast, nil
+		if data := podcastDataFromCache(cached); data != nil {
+			return data, nil
 		}
 	}
 
@@ -291,7 +323,7 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 
 	limit := 100
 	offset := 0
-	var fullResult map[string]interface{}
+	var fullData PodcastData
 
 	for {
 		variables := map[string]interface{}{
@@ -301,41 +333,70 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 			"sorting":   "PUBLISHED_DESCENDING",
 		}
 
-		var result map[string]interface{}
-		if err := c.graphql.Query(ctx, headers, query, variables, &result); err != nil {
-			if _, ok := err.(*AuthenticationError); ok {
-				return nil, err
+		var page PodcastData
+		if err := c.graphql.Query(ctx, headers, query, variables, &page); err != nil {
+			mapped := mapAuthError(err)
+			if _, ok := mapped.(*AuthenticationError); ok {
+				return nil, mapped
 			}
 			var gqlErr GQLError
 			if errors.As(err, &gqlErr) {
 				msg := strings.ToLower(gqlErr.Message)
-				if strings.Contains(msg, "unauthorized") || strings.Contains(msg, "unauthenticated") || strings.Contains(msg, "not authorized") {
-					return nil, NewAuthenticationError(gqlErr.Message)
+				if strings.Contains(msg, "not found") {
+					return nil, NewPodcastNotFoundError(fmt.Sprintf("Podcast %s not found", podcastID))
 				}
 			}
-			return nil, NewPodcastNotFoundError(fmt.Sprintf("Podcast %s not found or empty response", podcastID))
+			return nil, fmt.Errorf("fetch episodes for %s: %w", podcastID, err)
 		}
 
 		if offset == 0 {
-			fullResult = result
+			fullData = page
 		} else {
-			prevEpisodes, _ := fullResult["episodes"].([]interface{})
-			newEpisodes, _ := result["episodes"].([]interface{})
-			fullResult["episodes"] = append(prevEpisodes, newEpisodes...)
+			fullData.Episodes = append(fullData.Episodes, page.Episodes...)
 		}
 
-		episodes, _ := result["episodes"].([]interface{})
-		if len(episodes) < limit {
+		if len(page.Episodes) < limit {
 			break
 		}
 		offset += limit
 	}
 
-	c.podcastCache.Set(podcastID, fullResult, cacheTTL)
-	return fullResult, nil
+	if err := c.podcastCache.Set(podcastID, &fullData, cacheTTL); err != nil {
+		c.logger.Error("podcast cache write", "error", err)
+	}
+	return &fullData, nil
 }
 
-func (c *PodimoClient) SearchPodcasts(ctx context.Context, query string) ([]map[string]interface{}, error) {
+// podcastDataFromCache converts a cached value back to *PodcastData. The
+// FileCache stores values as interface{}; after a JSON round-trip through disk
+// they come back as map[string]interface{}, so we re-marshal and unmarshal into
+// the typed struct. Values already of type *PodcastData (in-memory hits) are
+// returned directly.
+func podcastDataFromCache(cached interface{}) *PodcastData {
+	if cached == nil {
+		return nil
+	}
+	if d, ok := cached.(*PodcastData); ok {
+		return d
+	}
+	if d, ok := cached.(PodcastData); ok {
+		return &d
+	}
+	if m, ok := cached.(map[string]interface{}); ok {
+		data, err := json.Marshal(m)
+		if err != nil {
+			return nil
+		}
+		var pd PodcastData
+		if err := json.Unmarshal(data, &pd); err != nil {
+			return nil
+		}
+		return &pd
+	}
+	return nil
+}
+
+func (c *PodimoClient) SearchPodcasts(ctx context.Context, query string) ([]SearchResult, error) {
 	if c.token == "" {
 		if _, err := c.Login(ctx); err != nil {
 			return nil, err
@@ -387,31 +448,32 @@ func (c *PodimoClient) SearchPodcasts(ctx context.Context, query string) ([]map[
 
 	var lastErr error
 	for _, variant := range variants {
-		var result map[string]interface{}
+		var result struct {
+			Podcasts []SearchResult `json:"podcastsAutocomplete"`
+			Search   []SearchResult `json:"searchPodcasts"`
+		}
 		if err := c.graphql.Query(ctx, headers, variant.query, variant.variables, &result); err != nil {
 			lastErr = err
 			continue
 		}
-		podcasts, ok := result[variant.resultKey].([]interface{})
-		if !ok {
-			continue
+		var out []SearchResult
+		if variant.resultKey == "podcastsAutocomplete" && result.Podcasts != nil {
+			out = result.Podcasts
+		} else if variant.resultKey == "searchPodcasts" && result.Search != nil {
+			out = result.Search
 		}
-		var out []map[string]interface{}
-		for _, p := range podcasts {
-			if pm, ok := p.(map[string]interface{}); ok {
-				out = append(out, pm)
-			}
+		if out != nil {
+			return out, nil
 		}
-		return out, nil
 	}
 
 	if lastErr != nil {
 		c.logger.Warn("SearchPodcasts: all variants failed", "error", lastErr)
+		return nil, mapAuthError(lastErr)
 	}
-	return []map[string]interface{}{}, nil
+	return []SearchResult{}, nil
 }
-
-func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]map[string]interface{}, error) {
+func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]FollowedPodcast, error) {
 	if c.token == "" {
 		if _, err := c.Login(ctx); err != nil {
 			return nil, err
@@ -427,33 +489,22 @@ func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]map[string]in
 		}
 	}`
 
-	var result map[string]interface{}
+	var result struct {
+		Podcasts []FollowedPodcast `json:"podcastsFollowed"`
+	}
 	if err := c.graphql.Query(ctx, headers, query, nil, &result); err != nil {
-		return nil, err
+		return nil, mapAuthError(err)
 	}
 
-	podcasts, ok := result["podcastsFollowed"].([]interface{})
-	if !ok {
-		return []map[string]interface{}{}, nil
-	}
-
-	var out []map[string]interface{}
-	for _, p := range podcasts {
-		if pm, ok := p.(map[string]interface{}); ok {
-			out = append(out, pm)
-		}
-	}
-	return out, nil
+	return result.Podcasts, nil
 }
 
-func GetPodcastName(podcast map[string]interface{}) string {
-	podcastData, ok := podcast["podcast"].(map[string]interface{})
-	if !ok {
+func GetPodcastName(data *PodcastData) string {
+	if data == nil {
 		return "Unknown"
 	}
-	title, _ := podcastData["title"].(string)
-	if title == "" {
+	if data.Podcast.Title == "" {
 		return "Unknown"
 	}
-	return title
+	return data.Podcast.Title
 }

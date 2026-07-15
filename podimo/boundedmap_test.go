@@ -115,3 +115,39 @@ func TestBoundedMap_Len(t *testing.T) {
 		t.Fatalf("expected len 1, got %d", bm.Len())
 	}
 }
+
+func TestBoundedMap_OnEvict(t *testing.T) {
+	var evicted []int
+	bm := NewBoundedMap[string, int](BoundedMapOptions{
+		MaxSize: 2,
+		OnEvict: func(v any) {
+			if n, ok := v.(int); ok {
+				evicted = append(evicted, n)
+			}
+		},
+	})
+	bm.Set("a", 1, time.Hour)
+	bm.Set("b", 2, time.Hour)
+	bm.Set("c", 3, time.Hour) // evicts "a" (LRU)
+	if len(evicted) != 1 || evicted[0] != 1 {
+		t.Fatalf("expected eviction of value 1, got %v", evicted)
+	}
+}
+
+func TestBoundedMap_Peek(t *testing.T) {
+	bm := NewBoundedMap[string, int](BoundedMapOptions{MaxSize: 2})
+	bm.Set("a", 1, time.Hour)
+	bm.Set("b", 2, time.Hour)
+	v, ok := bm.Peek("a")
+	if !ok || v != 1 {
+		t.Fatalf("expected peek hit, got %v ok=%v", v, ok)
+	}
+	// Peek should NOT update LRU — "a" should be evicted, not "b"
+	bm.Set("c", 3, time.Hour)
+	if _, ok := bm.Peek("a"); ok {
+		t.Fatalf("expected a to be evicted (Peek does not update LRU)")
+	}
+	if _, ok := bm.Peek("b"); !ok {
+		t.Fatalf("expected b to exist")
+	}
+}

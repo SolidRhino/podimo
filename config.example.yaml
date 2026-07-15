@@ -16,6 +16,13 @@ password: ""
 # Public feeds — removes itunes:block so podcast catalogues may index them
 public_feeds: false
 
+# Trusted proxy header for client IP extraction (rate limiting).
+# Only set this when running behind a trusted reverse proxy. If set,
+# the header's first value (e.g. X-Forwarded-For) is used instead of
+# the direct RemoteAddr for rate-limit keying. Setting this when
+# clients can spoof the header enables rate-limit bypass.
+trusted_proxy_header: ""
+
 # Proxy / scraper settings
 http_proxy: ""
 zenrows_api: ""

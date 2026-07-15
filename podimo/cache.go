@@ -2,6 +2,7 @@ package podimo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 type FileCache struct {
 	dir      string
+	mem      *BoundedMap[string, cacheEntry]
 	keyLocks *BoundedMap[string, *sync.Mutex]
 	dirMode  os.FileMode
 	fileMode os.FileMode
@@ -29,6 +31,7 @@ func NewFileCache(dir string) (*FileCache, error) {
 		dir:      dir,
 		dirMode:  0755,
 		fileMode: 0644,
+		mem:      NewBoundedMap[string, cacheEntry](BoundedMapOptions{MaxSize: 512}),
 		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
 			MaxSize: 0, // unbounded to avoid evicting live mutexes
 		}),
@@ -48,6 +51,7 @@ func NewSecureFileCache(dir string) (*FileCache, error) {
 		dir:      dir,
 		dirMode:  0700,
 		fileMode: 0600,
+		mem:      NewBoundedMap[string, cacheEntry](BoundedMapOptions{MaxSize: 512}),
 		keyLocks: NewBoundedMap[string, *sync.Mutex](BoundedMapOptions{
 			MaxSize: 0, // unbounded to avoid evicting live mutexes
 		}),
@@ -63,9 +67,28 @@ func (c *FileCache) getKeyLock(key string) *sync.Mutex {
 }
 
 func (c *FileCache) Get(key string) (interface{}, bool) {
+	// Fast path: serve fresh entries from the in-memory cache without the
+	// per-key lock. Expired entries are NOT touched here — they fall through to
+	// the locked path so disk removal can never race a concurrent Set.
+	if e, ok := c.mem.Peek(key); ok {
+		if time.Now().Before(e.ExpiresAt) {
+			return e.Value, true
+		}
+	}
+
 	l := c.getKeyLock(key)
 	l.Lock()
 	defer l.Unlock()
+
+	// Re-check memory under the per-key lock in case a concurrent Set raced us.
+	if e, ok := c.mem.Peek(key); ok {
+		if time.Now().After(e.ExpiresAt) {
+			c.mem.Delete(key)
+			_ = os.Remove(filepath.Join(c.dir, key+".json"))
+			return nil, false
+		}
+		return e.Value, true
+	}
 
 	path := filepath.Join(c.dir, key+".json")
 	data, err := os.ReadFile(path)
@@ -80,6 +103,8 @@ func (c *FileCache) Get(key string) (interface{}, bool) {
 		_ = os.Remove(path)
 		return nil, false
 	}
+	// Populate the in-memory layer for subsequent fast-path hits.
+	c.mem.Set(key, entry, 0)
 	return entry.Value, true
 }
 
@@ -101,5 +126,20 @@ func (c *FileCache) Set(key string, value interface{}, ttl time.Duration) error 
 		return err
 	}
 	_ = os.Chmod(path, c.fileMode)
+	c.mem.Set(key, entry, 0)
+	return nil
+}
+
+// Delete removes a key from both the in-memory layer and disk. A missing file is
+// treated as success so callers can invalidate already-absent tokens idempotently.
+func (c *FileCache) Delete(key string) error {
+	l := c.getKeyLock(key)
+	l.Lock()
+	defer l.Unlock()
+
+	c.mem.Delete(key)
+	if err := os.Remove(filepath.Join(c.dir, key+".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }

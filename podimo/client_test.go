@@ -159,8 +159,8 @@ func TestPodimoClient_SearchPodcasts(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0]["title"] != "Podcast 1" {
-		t.Fatalf("unexpected title: %v", results[0]["title"])
+	if results[0].Title != "Podcast 1" {
+		t.Fatalf("unexpected title: %v", results[0].Title)
 	}
 }
 
@@ -182,11 +182,11 @@ func TestPodimoClient_SearchPodcasts_AllVariantsFail(t *testing.T) {
 	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	client.token = "fake" // skip login
 	results, err := client.SearchPodcasts(context.Background(), "test")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error when all variants fail, got nil")
 	}
-	if len(results) != 0 {
-		t.Fatalf("expected 0 results, got %d", len(results))
+	if results != nil {
+		t.Fatalf("expected nil results when all variants fail, got %v", results)
 	}
 }
 
@@ -215,13 +215,51 @@ func TestPodimoClient_GetFollowedPodcasts(t *testing.T) {
 }
 
 func TestGetPodcastName(t *testing.T) {
-	data := map[string]interface{}{
-		"podcast": map[string]interface{}{"title": "Nice Podcast"},
-	}
+	data := &PodcastData{Podcast: Podcast{Title: "Nice Podcast"}}
 	if GetPodcastName(data) != "Nice Podcast" {
 		t.Fatalf("expected Nice Podcast")
 	}
-	if GetPodcastName(map[string]interface{}{}) != "Unknown" {
+	if GetPodcastName(&PodcastData{}) != "Unknown" {
 		t.Fatalf("expected Unknown")
+	}
+}
+
+func TestGetPodcasts_GQLErrorNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"errors": []map[string]interface{}{
+				{"message": "Podcast not found"},
+			},
+		})
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	tc, _ := NewFileCache(dir)
+	pc, _ := NewFileCache(dir)
+	gl := NewGraphQLClient(srv.URL, srv.Client())
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
+	client.token = "fake"
+	_, err := client.GetPodcasts(context.Background(), "pid", time.Hour)
+	if _, ok := err.(*PodcastNotFoundError); !ok {
+		t.Fatalf("expected PodcastNotFoundError, got %T %v", err, err)
+	}
+}
+
+func TestGetPodcasts_NetworkErrorNot404(t *testing.T) {
+	// Point to a non-listening port to force a network error.
+	gl := NewGraphQLClient("http://127.0.0.1:1", &http.Client{Timeout: 100 * time.Millisecond})
+	dir := t.TempDir()
+	tc, _ := NewFileCache(dir)
+	pc, _ := NewFileCache(dir)
+	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
+	client.token = "fake"
+	_, err := client.GetPodcasts(context.Background(), "pid", time.Hour)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if _, ok := err.(*PodcastNotFoundError); ok {
+		t.Fatalf("network error must not be misclassified as PodcastNotFoundError")
 	}
 }

@@ -407,8 +407,9 @@ func TestLoggingMiddleware_Redaction(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml", "/feed/u/REDACTED/12345678-1234-1234-1234-123456789abc.xml"},
-		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml?region=nl", "/feed/u/REDACTED/12345678-1234-1234-1234-123456789abc.xml?region=nl"},
+		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml", "/feed/REDACTED/REDACTED/12345678-1234-1234-1234-123456789abc.xml"},
+		{"/feed/u/secret/12345678-1234-1234-1234-123456789abc.xml?region=nl", "/feed/REDACTED/REDACTED/12345678-1234-1234-1234-123456789abc.xml?region=nl"},
+		{"/feed/12345678-1234-1234-1234-123456789abc.xml", "/feed/12345678-1234-1234-1234-123456789abc.xml"},
 		{"/search?q=test", "/search?q=test"},
 		{"/health", "/health"},
 	}
@@ -590,5 +591,176 @@ public_feeds: true
 	}
 	if !cfg.PublicFeeds {
 		t.Error("public_feeds: expected true")
+	}
+}
+
+func TestRateLimiter_SlidingWindow(t *testing.T) {
+	rl := NewRateLimiter(50*time.Millisecond, 2)
+	if !rl.Allow("1.2.3.4") {
+		t.Fatal("first call should be allowed")
+	}
+	if !rl.Allow("1.2.3.4") {
+		t.Fatal("second call should be allowed")
+	}
+	if rl.Allow("1.2.3.4") {
+		t.Fatal("third call in same window should be denied")
+	}
+	time.Sleep(60 * time.Millisecond)
+	if !rl.Allow("1.2.3.4") {
+		t.Fatal("call after window elapsed should be allowed")
+	}
+}
+
+func TestRateLimitMiddleware_TrustedProxyHeader(t *testing.T) {
+	app := setupTestApp(t)
+	app.cfg.TrustedProxyHeader = "X-Forwarded-For"
+	app.limiter = NewRateLimiter(10*time.Second, 1) // max=1 per IP
+	router := app.setupRoutes()
+
+	// Both requests share the same RemoteAddr (httptest default) but have
+	// different X-Forwarded-For values. If the header is used, each "client"
+	// gets its own bucket and both pass. If RemoteAddr were used, the second
+	// would be rate-limited (max=1).
+	for _, xff := range []string{"1.1.1.1", "2.2.2.2"} {
+		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+		req.Header.Set("X-Forwarded-For", xff)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			t.Fatalf("request with X-Forwarded-For %s should not be rate-limited (distinct IP), got %d", xff, rr.Code)
+		}
+	}
+
+	// A second request from the same XFF IP should now be rate-limited (max=1).
+	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	req.Header.Set("X-Forwarded-For", "1.1.1.1")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rate limiting for same XFF IP, got %d", rr.Code)
+	}
+}
+
+func TestHandleFeed_StaleTokenRetry(t *testing.T) {
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+
+		// Call 1: GetPodcasts with stale token → auth error
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []map[string]interface{}{
+					{"message": "Unauthorized"},
+				},
+			})
+			return
+		}
+		// Calls 2-4: RefreshToken → 3-step login (preregister, onboarding, authorize)
+		if callCount == 2 {
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"}}})
+			return
+		}
+		if callCount == 3 {
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"userOnboardingFlow": map[string]interface{}{"id": "oid"}}})
+			return
+		}
+		if callCount == 4 {
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithCredentials": map[string]interface{}{"token": "fresh-token"}}})
+			return
+		}
+		// Call 5: GetPodcasts with fresh token → success
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcast": map[string]interface{}{
+					"title":       "Retry Podcast",
+					"description": "Desc",
+					"authorName":  "Author",
+					"language":    "en",
+					"images":      map[string]interface{}{"coverImageUrl": "http://cover.jpg"},
+				},
+				"episodes": []interface{}{
+					map[string]interface{}{
+						"id":              "ep1",
+						"title":           "Episode 1",
+						"description":     "Desc 1",
+						"publishDatetime": "2023-01-01T00:00:00Z",
+						"audio":           map[string]interface{}{"url": "http://audio.mp3", "duration": 60.0},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	key := podimo.TokenKey("u", "p")
+	app.tokenCache.Set(key, "stale-token", time.Hour)
+	app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 after stale-token retry, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "<title>Retry Podcast</title>") {
+		t.Fatalf("expected RSS with Retry Podcast, got %s", rr.Body.String())
+	}
+	// Stale token should have been deleted from cache.
+	if _, ok := app.tokenCache.Get(key); ok {
+		t.Fatal("expected stale token to be deleted from cache")
+	}
+}
+
+type trackingTransport struct {
+	closedIdle bool
+	base       http.RoundTripper
+}
+
+func (t *trackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.base.RoundTrip(req)
+}
+
+func (t *trackingTransport) CloseIdleConnections() {
+	t.closedIdle = true
+	if t.base != nil {
+		if c, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+			c.CloseIdleConnections()
+		}
+	}
+}
+
+func TestClientsMap_EvictionClosesIdleConnections(t *testing.T) {
+	// Build a clients BoundedMap with MaxSize=1 and the same OnEvict callback
+	// used in main() so eviction calls CloseIdleConnections on the evicted client.
+	clients := podimo.NewBoundedMap[string, *http.Client](podimo.BoundedMapOptions{
+		MaxSize: 1,
+		OnEvict: func(v any) {
+			if c, ok := v.(*http.Client); ok {
+				c.CloseIdleConnections()
+			}
+		},
+	})
+
+	tt1 := &trackingTransport{base: http.DefaultTransport}
+	c1 := &http.Client{Transport: tt1}
+	tt2 := &trackingTransport{base: http.DefaultTransport}
+	c2 := &http.Client{Transport: tt2}
+
+	clients.Set("user1", c1, time.Hour)
+	clients.Set("user2", c2, time.Hour) // evicts user1
+
+	if !tt1.closedIdle {
+		t.Fatal("expected evicted client's CloseIdleConnections to be called")
+	}
+	if tt2.closedIdle {
+		t.Fatal("expected non-evicted client's CloseIdleConnections to NOT be called")
 	}
 }

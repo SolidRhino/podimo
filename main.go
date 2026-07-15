@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -31,10 +30,11 @@ var staticFS embed.FS
 
 var podcastIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-var credentialPathPattern = regexp.MustCompile(`(?i)^(/feed/[^/]+/)[^/]+(/[^/]+\.xml.*)$`)
+var credentialPathPattern = regexp.MustCompile(`(?i)^(/feed/)[^/]+/[^/]+(/[^/]+\.xml.*)$`)
+var urlUUIDPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 func redactURLString(raw string) string {
-	return credentialPathPattern.ReplaceAllString(raw, "${1}REDACTED${2}")
+	return credentialPathPattern.ReplaceAllString(raw, "${1}REDACTED/REDACTED${2}")
 }
 
 type App struct {
@@ -50,14 +50,22 @@ type App struct {
 
 type RateLimiter struct {
 	mu     sync.Mutex
-	ips    *podimo.BoundedMap[string, []time.Time]
+	ips    *podimo.BoundedMap[string, *slidingWindow]
 	window time.Duration
 	max    int
 }
 
+// slidingWindow is a fixed-window counter that slides forward in time. When the
+// current window elapses the count resets. This is O(1) per Allow call with no
+// slice scan or reallocation.
+type slidingWindow struct {
+	count  int
+	starts time.Time
+}
+
 func NewRateLimiter(window time.Duration, max int) *RateLimiter {
 	return &RateLimiter{
-		ips: podimo.NewBoundedMap[string, []time.Time](podimo.BoundedMapOptions{
+		ips: podimo.NewBoundedMap[string, *slidingWindow](podimo.BoundedMapOptions{
 			MaxSize:         10000,
 			TTL:             window,
 			CleanupInterval: window,
@@ -72,19 +80,17 @@ func (r *RateLimiter) Allow(ip string) bool {
 	defer r.mu.Unlock()
 
 	now := time.Now()
-	var reqs []time.Time
-	if v, ok := r.ips.Get(ip); ok {
-		reqs = v
+	w, ok := r.ips.Peek(ip)
+	if !ok || w == nil {
+		w = &slidingWindow{starts: now}
 	}
-	var valid []time.Time
-	for _, t := range reqs {
-		if now.Sub(t) < r.window {
-			valid = append(valid, t)
-		}
+	if now.Sub(w.starts) >= r.window {
+		w.count = 0
+		w.starts = now
 	}
-	valid = append(valid, now)
-	r.ips.Set(ip, valid, r.window)
-	return len(valid) <= r.max
+	w.count++
+	r.ips.Set(ip, w, r.window)
+	return w.count <= r.max
 }
 
 func main() {
@@ -150,6 +156,11 @@ func main() {
 			MaxSize:         100,
 			TTL:             cfg.TokenCacheTime,
 			CleanupInterval: 24 * time.Hour,
+			OnEvict: func(v any) {
+				if c, ok := v.(*http.Client); ok {
+					c.CloseIdleConnections()
+				}
+			},
 		}),
 	}
 
@@ -199,13 +210,26 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func (a *App) clientIP(r *http.Request) string {
+	if a.cfg.TrustedProxyHeader != "" {
+		if h := r.Header.Get(a.cfg.TrustedProxyHeader); h != "" {
+			// X-Forwarded-For may carry a comma-separated client chain; the first
+			// entry is the original client.
+			if i := strings.IndexByte(h, ','); i >= 0 {
+				return strings.TrimSpace(h[:i])
+			}
+			return strings.TrimSpace(h)
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func (a *App) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(ip); err == nil {
-			ip = host
-		}
-		if !a.limiter.Allow(ip) {
+		if !a.limiter.Allow(a.clientIP(r)) {
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -228,26 +252,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var username, password, region, locale string
-	if a.cfg.LocalCredentials {
-		username = a.cfg.Email
-		password = a.cfg.Password
-		region = r.URL.Query().Get("region")
-		if region == "" {
-			region = "nl"
-		}
-		locale = r.URL.Query().Get("locale")
-		if locale == "" {
-			locale = "nl-NL"
-		}
-	} else {
-		user, pass, ok := r.BasicAuth()
-		if !ok {
-			authenticate(w)
-			return
-		}
-		username, region, locale = splitUsernameRegionLocale(user)
-		password = pass
+	username, password, region, locale, ok := a.resolveCredentials(r, w)
+	if !ok {
+		return
 	}
 
 	if !a.cfg.isValidRegion(region) {
@@ -270,6 +277,13 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	results, err := client.SearchPodcasts(r.Context(), searchQuery)
 	if err != nil {
+		if _, ok := err.(*podimo.AuthenticationError); ok {
+			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+				results, err = client.SearchPodcasts(r.Context(), searchQuery)
+			}
+		}
+	}
+	if err != nil {
 		a.logger.Error("Search error", "error", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		a.templates.ExecuteTemplate(w, "search_results.html", map[string]interface{}{
@@ -286,26 +300,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
-	var username, password, region, locale string
-	if a.cfg.LocalCredentials {
-		username = a.cfg.Email
-		password = a.cfg.Password
-		region = r.URL.Query().Get("region")
-		if region == "" {
-			region = "nl"
-		}
-		locale = r.URL.Query().Get("locale")
-		if locale == "" {
-			locale = "nl-NL"
-		}
-	} else {
-		user, pass, ok := r.BasicAuth()
-		if !ok {
-			authenticate(w)
-			return
-		}
-		username, region, locale = splitUsernameRegionLocale(user)
-		password = pass
+	username, password, region, locale, ok := a.resolveCredentials(r, w)
+	if !ok {
+		return
 	}
 
 	if !a.cfg.isValidRegion(region) {
@@ -327,6 +324,13 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := client.GetFollowedPodcasts(r.Context())
+	if err != nil {
+		if _, ok := err.(*podimo.AuthenticationError); ok {
+			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+				results, err = client.GetFollowedPodcasts(r.Context())
+			}
+		}
+	}
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -350,73 +354,12 @@ func (a *App) handleFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var username, password, region, locale string
-	if a.cfg.LocalCredentials {
-		username = a.cfg.Email
-		password = a.cfg.Password
-		region = r.URL.Query().Get("region")
-		if region == "" {
-			region = "nl"
-		}
-		locale = r.URL.Query().Get("locale")
-		if locale == "" {
-			locale = "nl-NL"
-		}
-	} else {
-		user, pass, ok := r.BasicAuth()
-		if !ok {
-			authenticate(w)
-			return
-		}
-		username, region, locale = splitUsernameRegionLocale(user)
-		password = pass
-	}
-
-	if !a.cfg.isValidRegion(region) {
-		http.Error(w, "Invalid region", http.StatusBadRequest)
-		return
-	}
-	if !a.cfg.isValidLocale(locale) {
-		http.Error(w, "Invalid locale", http.StatusBadRequest)
+	username, password, region, locale, ok := a.resolveCredentials(r, w)
+	if !ok {
 		return
 	}
 
-	if _, ok := a.cfg.Blocked[podcastID]; ok {
-		http.Error(w, "Podcast is gone", http.StatusGone)
-		return
-	}
-
-	client, err := a.checkAuth(r.Context(), username, password, region, locale)
-	if err != nil {
-		authenticate(w)
-		return
-	}
-
-	data, err := client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-	if err != nil {
-		if _, ok := err.(*podimo.PodcastNotFoundError); ok {
-			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
-			return
-		}
-		if _, ok := err.(*podimo.AuthenticationError); ok {
-			authenticate(w)
-			return
-		}
-		a.logger.Error("Podcast fetch error", "error", err)
-		http.Error(w, "Something went wrong while fetching the podcasts", http.StatusInternalServerError)
-		return
-	}
-
-	httpClient := a.getHTTPClient(client.Key())
-	rssXML, err := podimo.PodcastsToRss(r.Context(), podcastID, data, locale, a.headCache, a.cfg.PublicFeeds, a.cfg.HeadCacheTime, httpClient, a.logger)
-	if err != nil {
-		a.logger.Error("RSS generation error", "error", err)
-		http.Error(w, "Something went wrong while generating the RSS feed", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-	w.Write(rssXML)
+	a.serveFeed(w, r, podcastID, username, password, region, locale)
 }
 
 func (a *App) handleFeedPath(w http.ResponseWriter, r *http.Request) {
@@ -427,20 +370,53 @@ func (a *App) handleFeedPath(w http.ResponseWriter, r *http.Request) {
 	username, _ = url.PathUnescape(username)
 	password, _ = url.PathUnescape(password)
 
-	region := r.URL.Query().Get("region")
-	if region == "" {
-		region = "nl"
-	}
-	locale := r.URL.Query().Get("locale")
-	if locale == "" {
-		locale = "nl-NL"
-	}
+	region, locale := a.defaultRegionLocale(r)
 
 	if !podcastIDPattern.MatchString(podcastID) {
 		http.Error(w, "Invalid podcast id format", http.StatusBadRequest)
 		return
 	}
 
+	a.serveFeed(w, r, podcastID, username, password, region, locale)
+}
+
+// resolveCredentials extracts username/password/region/locale for Basic-Auth and
+// local-credentials modes. ok is false when the caller has already written a
+// response (401 challenge) and must return immediately.
+func (a *App) resolveCredentials(r *http.Request, w http.ResponseWriter) (username, password, region, locale string, ok bool) {
+	if a.cfg.LocalCredentials {
+		username = a.cfg.Email
+		password = a.cfg.Password
+		region, locale = a.defaultRegionLocale(r)
+		return username, password, region, locale, true
+	}
+	user, pass, authOK := r.BasicAuth()
+	if !authOK {
+		authenticate(w)
+		return "", "", "", "", false
+	}
+	username, region, locale = splitUsernameRegionLocale(user)
+	password = pass
+	return username, password, region, locale, true
+}
+
+// defaultRegionLocale returns the region/locale from query params, defaulting to
+// Dutch for podcast-app compatibility.
+func (a *App) defaultRegionLocale(r *http.Request) (region, locale string) {
+	region = r.URL.Query().Get("region")
+	if region == "" {
+		region = "nl"
+	}
+	locale = r.URL.Query().Get("locale")
+	if locale == "" {
+		locale = "nl-NL"
+	}
+	return region, locale
+}
+
+// serveFeed handles the shared tail of handleFeed/handleFeedPath: block-list check,
+// auth, episode fetch (with one stale-token refresh retry), and RSS generation.
+func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, username, password, region, locale string) {
 	if !a.cfg.isValidRegion(region) {
 		http.Error(w, "Invalid region", http.StatusBadRequest)
 		return
@@ -462,6 +438,13 @@ func (a *App) handleFeedPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data, err := client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
+	if err != nil {
+		if _, ok := err.(*podimo.AuthenticationError); ok {
+			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+				data, err = client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
+			}
+		}
+	}
 	if err != nil {
 		if _, ok := err.(*podimo.PodcastNotFoundError); ok {
 			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
@@ -536,7 +519,9 @@ func (a *App) checkAuth(ctx context.Context, username, password, region, locale 
 		return nil, err
 	}
 	if token != "" && a.cfg.StoreTokensOnDisk {
-		a.tokenCache.Set(key, token, a.cfg.TokenCacheTime)
+		if err := a.tokenCache.Set(key, token, a.cfg.TokenCacheTime); err != nil {
+			a.logger.Error("token cache write", "error", err)
+		}
 	}
 	return client, nil
 }
@@ -555,8 +540,7 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !podcastIDPattern.MatchString(podcastID) {
-			urlPattern := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-			match := urlPattern.FindString(podcastID)
+			match := urlUUIDPattern.FindString(podcastID)
 			if match == "" {
 				a.renderIndex(w, r, "Podcast ID is not valid", "")
 				return
@@ -584,7 +568,7 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 			password := r.FormValue("password")
 			userPart := fmt.Sprintf("%s,%s,%s", email, region, locale)
 			feedURL = fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
-				a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, randomHexID(8))
+				a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
 		}
 		a.renderFeedLocation(w, r, feedURL)
 		return
@@ -633,16 +617,7 @@ func (a *App) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) buildFeedURL(podcastID, region, locale string) string {
 	return fmt.Sprintf("%s://%s/feed/%s.xml?region=%s&locale=%s&random=%s",
-		a.cfg.Protocol, a.cfg.Hostname, podcastID, region, locale, randomHexID(8))
-}
-
-func randomHexID(length int) string {
-	const hexChars = "1234567890abcdef"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = hexChars[rand.Intn(len(hexChars))]
-	}
-	return string(b)
+		a.cfg.Protocol, a.cfg.Hostname, podcastID, region, locale, podimo.RandomHexID(8))
 }
 
 func splitUsernameRegionLocale(user string) (username, region, locale string) {

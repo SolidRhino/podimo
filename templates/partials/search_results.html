@@ -5,14 +5,14 @@
 {{ else }}
 <ul>
   {{ range .Results }}
-  <li onclick="selectPodcast('{{ .id }}')">
-    {{ if .coverImageUrl }}
-    <img src="{{ .coverImageUrl }}" width="48" height="48">
+  <li onclick="selectPodcast('{{ .ID }}')">
+    {{ if .CoverImageURL }}
+    <img src="{{ .CoverImageURL }}" width="48" height="48">
     {{ end }}
     <div>
-      <strong>{{ .title }}</strong>
-      {{ if .authorName }}
-      <br><small>{{ .authorName }}</small>
+      <strong>{{ .Title }}</strong>
+      {{ if .AuthorName }}
+      <br><small>{{ .AuthorName }}</small>
       {{ end }}
     </div>
   </li>

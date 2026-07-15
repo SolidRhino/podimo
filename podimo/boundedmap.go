@@ -10,6 +10,7 @@ type BoundedMapOptions struct {
 	MaxSize         int
 	TTL             time.Duration
 	CleanupInterval time.Duration
+	OnEvict         func(any)
 }
 
 type entry[V any] struct {
@@ -42,32 +43,55 @@ func NewBoundedMap[K comparable, V any](opts BoundedMapOptions) *BoundedMap[K, V
 
 func (bm *BoundedMap[K, V]) Get(key K) (V, bool) {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	return bm.get(key)
+	v, evicted, ok := bm.get(key)
+	bm.mu.Unlock()
+	bm.fireCallbacks(evicted)
+	return v, ok
 }
 
-func (bm *BoundedMap[K, V]) get(key K) (V, bool) {
+// get returns the value and ok. If the entry expired it is removed and returned
+// in evicted so the caller can fire OnEvict after releasing the lock.
+func (bm *BoundedMap[K, V]) get(key K) (V, []V, bool) {
+	e, ok := bm.items[key]
+	if !ok {
+		var zero V
+		return zero, nil, false
+	}
+	if !e.expiresAt.IsZero() && time.Now().After(e.expiresAt) {
+		v, _ := bm.removeEntry(key)
+		var zero V
+		return zero, []V{v}, false
+	}
+	bm.lru.MoveToFront(e.elem)
+	return e.value, nil, true
+}
+
+// Peek returns the value for key without updating LRU recency and without taking
+// a write lock. Expired entries are reported as misses but not removed (the
+// background cleanup or a subsequent Set/Get handles removal).
+func (bm *BoundedMap[K, V]) Peek(key K) (V, bool) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
 	e, ok := bm.items[key]
 	if !ok {
 		var zero V
 		return zero, false
 	}
 	if !e.expiresAt.IsZero() && time.Now().After(e.expiresAt) {
-		bm.removeEntry(key)
 		var zero V
 		return zero, false
 	}
-	bm.lru.MoveToFront(e.elem)
 	return e.value, true
 }
 
 func (bm *BoundedMap[K, V]) Set(key K, value V, ttl time.Duration) {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	bm.set(key, value, ttl)
+	evicted := bm.set(key, value, ttl)
+	bm.mu.Unlock()
+	bm.fireCallbacks(evicted)
 }
 
-func (bm *BoundedMap[K, V]) set(key K, value V, ttl time.Duration) {
+func (bm *BoundedMap[K, V]) set(key K, value V, ttl time.Duration) []V {
 	if e, ok := bm.items[key]; ok {
 		e.value = value
 		if ttl > 0 {
@@ -78,7 +102,7 @@ func (bm *BoundedMap[K, V]) set(key K, value V, ttl time.Duration) {
 			e.expiresAt = time.Time{}
 		}
 		bm.lru.MoveToFront(e.elem)
-		return
+		return nil
 	}
 	elem := bm.lru.PushFront(key)
 	e := &entry[V]{value: value, elem: elem}
@@ -89,41 +113,65 @@ func (bm *BoundedMap[K, V]) set(key K, value V, ttl time.Duration) {
 	}
 	bm.items[key] = e
 	if bm.opts.MaxSize > 0 && bm.lru.Len() > bm.opts.MaxSize {
-		bm.evictLRU()
+		if v, ok := bm.evictLRU(); ok {
+			return []V{v}
+		}
 	}
+	return nil
 }
 
 func (bm *BoundedMap[K, V]) GetOrSet(key K, factory func() V, ttl time.Duration) V {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	if v, ok := bm.get(key); ok {
-		return v
+	v, evicted, ok := bm.get(key)
+	if !ok {
+		v = factory()
+		more := bm.set(key, v, ttl)
+		evicted = append(evicted, more...)
 	}
-	value := factory()
-	bm.set(key, value, ttl)
-	return value
+	bm.mu.Unlock()
+	bm.fireCallbacks(evicted)
+	return v
 }
 
 func (bm *BoundedMap[K, V]) Delete(key K) {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	bm.removeEntry(key)
+	v, ok := bm.removeEntry(key)
+	bm.mu.Unlock()
+	if ok {
+		bm.fireCallbacks([]V{v})
+	}
 }
 
-func (bm *BoundedMap[K, V]) removeEntry(key K) {
+// removeEntry removes the entry and returns its value. Caller holds the write
+// lock. Returns the zero value and false if the key was absent.
+func (bm *BoundedMap[K, V]) removeEntry(key K) (V, bool) {
 	if e, ok := bm.items[key]; ok {
 		bm.lru.Remove(e.elem)
 		delete(bm.items, key)
+		return e.value, true
 	}
+	var zero V
+	return zero, false
 }
 
-func (bm *BoundedMap[K, V]) evictLRU() {
+// evictLRU removes the least-recently-used entry. Caller holds the write lock.
+func (bm *BoundedMap[K, V]) evictLRU() (V, bool) {
 	back := bm.lru.Back()
 	if back == nil {
-		return
+		var zero V
+		return zero, false
 	}
 	key := back.Value.(K)
-	bm.removeEntry(key)
+	return bm.removeEntry(key)
+}
+
+func (bm *BoundedMap[K, V]) fireCallbacks(values []V) {
+	if bm.opts.OnEvict == nil || len(values) == 0 {
+		return
+	}
+	for _, v := range values {
+		bm.opts.OnEvict(v)
+	}
 }
 
 func (bm *BoundedMap[K, V]) Len() int {
@@ -153,11 +201,15 @@ func (bm *BoundedMap[K, V]) cleanupLoop() {
 
 func (bm *BoundedMap[K, V]) cleanup() {
 	bm.mu.Lock()
-	defer bm.mu.Unlock()
 	now := time.Now()
+	var evicted []V
 	for key, e := range bm.items {
 		if !e.expiresAt.IsZero() && now.After(e.expiresAt) {
-			bm.removeEntry(key)
+			if v, ok := bm.removeEntry(key); ok {
+				evicted = append(evicted, v)
+			}
 		}
 	}
+	bm.mu.Unlock()
+	bm.fireCallbacks(evicted)
 }

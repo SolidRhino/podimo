@@ -16,27 +16,28 @@ import (
 )
 
 type Config struct {
-	Hostname          string              `mapstructure:"hostname"`
-	BindHost          string              `mapstructure:"bind_host"`
-	Protocol          string              `mapstructure:"protocol"`
-	HTTPProxy         string              `mapstructure:"http_proxy"`
-	ZenRowsAPI        string              `mapstructure:"zenrows_api"`
-	ScraperAPI        string              `mapstructure:"scraper_api"`
-	CacheDir          string              `mapstructure:"cache_dir"`
-	BlockListFile     string              `mapstructure:"block_list_file"`
-	Debug             bool                `mapstructure:"debug"`
-	LocalCredentials  bool                `mapstructure:"local_credentials"`
-	Email             string              `mapstructure:"email"`
-	Password          string              `mapstructure:"password"`
-	GraphQLURL        string              `mapstructure:"graphql_url"`
-	StoreTokensOnDisk bool                `mapstructure:"store_tokens_on_disk"`
-	TokenCacheTime    time.Duration       `mapstructure:"token_cache_time"`
-	PodcastCacheTime  time.Duration       `mapstructure:"podcast_cache_time"`
-	HeadCacheTime     time.Duration       `mapstructure:"head_cache_time"`
-	PublicFeeds       bool                `mapstructure:"public_feeds"`
-	Locales           []string            `mapstructure:"-"`
-	Regions           []Region            `mapstructure:"-"`
-	Blocked           map[string]struct{} `mapstructure:"-"`
+	Hostname           string              `mapstructure:"hostname"`
+	BindHost           string              `mapstructure:"bind_host"`
+	Protocol           string              `mapstructure:"protocol"`
+	HTTPProxy          string              `mapstructure:"http_proxy"`
+	ZenRowsAPI         string              `mapstructure:"zenrows_api"`
+	ScraperAPI         string              `mapstructure:"scraper_api"`
+	CacheDir           string              `mapstructure:"cache_dir"`
+	BlockListFile      string              `mapstructure:"block_list_file"`
+	Debug              bool                `mapstructure:"debug"`
+	LocalCredentials   bool                `mapstructure:"local_credentials"`
+	Email              string              `mapstructure:"email"`
+	Password           string              `mapstructure:"password"`
+	GraphQLURL         string              `mapstructure:"graphql_url"`
+	StoreTokensOnDisk  bool                `mapstructure:"store_tokens_on_disk"`
+	TokenCacheTime     time.Duration       `mapstructure:"token_cache_time"`
+	PodcastCacheTime   time.Duration       `mapstructure:"podcast_cache_time"`
+	HeadCacheTime      time.Duration       `mapstructure:"head_cache_time"`
+	PublicFeeds        bool                `mapstructure:"public_feeds"`
+	TrustedProxyHeader string              `mapstructure:"trusted_proxy_header"`
+	Locales            []string            `mapstructure:"-"`
+	Regions            []Region            `mapstructure:"-"`
+	Blocked            map[string]struct{} `mapstructure:"-"`
 }
 
 type Region struct {
@@ -65,6 +66,7 @@ func LoadConfig(configFile string) (*Config, error) {
 	v.SetDefault("podcast_cache_time", 6*time.Hour)
 	v.SetDefault("head_cache_time", 7*24*time.Hour)
 	v.SetDefault("public_feeds", false)
+	v.SetDefault("trusted_proxy_header", "")
 
 	if configFile != "" {
 		v.SetConfigFile(configFile)
@@ -153,13 +155,6 @@ func strictDurationHook(from, to reflect.Type, data interface{}) (interface{}, e
 		return data, nil
 	}
 	return parseDuration(data.(string), 0)
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 func parseBool(v string) (bool, error) {

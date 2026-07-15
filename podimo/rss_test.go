@@ -35,10 +35,10 @@ func TestChunks(t *testing.T) {
 }
 
 func TestExtractAudioURL(t *testing.T) {
-	ep := map[string]interface{}{
-		"audio": map[string]interface{}{
-			"url":      "http://example.com/audio.mp3",
-			"duration": 123.0,
+	ep := Episode{
+		Audio: EpisodeAudio{
+			URL:      "http://example.com/audio.mp3",
+			Duration: 123.0,
 		},
 	}
 	url, dur := ExtractAudioURL(ep)
@@ -48,10 +48,10 @@ func TestExtractAudioURL(t *testing.T) {
 }
 
 func TestExtractAudioURL_StreamMedia(t *testing.T) {
-	ep := map[string]interface{}{
-		"streamMedia": map[string]interface{}{
-			"url":      "http://example.com/hls-media/123/main.m3u8",
-			"duration": 456.0,
+	ep := Episode{
+		StreamMedia: EpisodeAudio{
+			URL:      "http://example.com/hls-media/123/main.m3u8",
+			Duration: 456.0,
 		},
 	}
 	url, dur := ExtractAudioURL(ep)
@@ -65,7 +65,7 @@ func TestURLHeadInfo_Cache(t *testing.T) {
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
 	c.Set("ep1", map[string]interface{}{"length": "12345", "type": "audio/mpeg"}, time.Hour)
-	cl, ct, err := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour)
+	cl, ct, err := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour, nil)
 	if err != nil || cl != "12345" || ct != "audio/mpeg" {
 		t.Fatalf("expected cache hit")
 	}
@@ -84,12 +84,12 @@ func TestURLHeadInfo_Network(t *testing.T) {
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
-	cl, ct, err := URLHeadInfo(context.Background(), srv.Client(), "ep1", srv.URL, nil, c, time.Hour)
+	cl, ct, err := URLHeadInfo(context.Background(), srv.Client(), "ep1", srv.URL, nil, c, time.Hour, nil)
 	if err != nil || cl != "42" || ct != "audio/mpeg" {
 		t.Fatalf("unexpected result: %v %s %s", err, cl, ct)
 	}
 	// second call should use cache without a network request
-	cl2, ct2, err2 := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour)
+	cl2, ct2, err2 := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour, nil)
 	if err2 != nil || cl2 != "42" || ct2 != "audio/mpeg" {
 		t.Fatalf("expected cache hit")
 	}
@@ -115,7 +115,7 @@ func TestURLHeadInfo_RetrySuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
-	cl, ct, err := URLHeadInfo(context.Background(), client, "retry-ep", srv.URL, nil, c, time.Hour)
+	cl, ct, err := URLHeadInfo(context.Background(), client, "retry-ep", srv.URL, nil, c, time.Hour, nil)
 	if err != nil {
 		t.Fatalf("unexpected error after retries: %v", err)
 	}
@@ -145,32 +145,32 @@ func TestURLHeadInfo_RetryExhausted(t *testing.T) {
 
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
-	_, _, err := URLHeadInfo(context.Background(), client, "fail-ep", srv.URL, nil, c, time.Hour)
+	_, _, err := URLHeadInfo(context.Background(), client, "fail-ep", srv.URL, nil, c, time.Hour, nil)
 	if err == nil {
 		t.Fatalf("expected error after all retries exhausted")
 	}
 }
 
 func TestPodcastsToRss_Basic(t *testing.T) {
-	data := map[string]interface{}{
-		"podcast": map[string]interface{}{
-			"title":       "Test",
-			"description": "Desc",
-			"authorName":  "Author",
-			"language":    "en",
-			"images": map[string]interface{}{
-				"coverImageUrl": "http://cover.jpg",
-			},
+	data := &PodcastData{
+		Podcast: Podcast{
+			Title:       "Test",
+			Description: "Desc",
+			AuthorName:  "Author",
+			Language:    "en",
+			Images: struct {
+				CoverImageURL string `json:"coverImageUrl"`
+			}{CoverImageURL: "http://cover.jpg"},
 		},
-		"episodes": []interface{}{
-			map[string]interface{}{
-				"id":              "ep1",
-				"title":           "Episode 1",
-				"description":     "Desc 1",
-				"publishDatetime": "2023-01-01T00:00:00Z",
-				"audio": map[string]interface{}{
-					"url":      "http://audio.mp3",
-					"duration": 60.0,
+		Episodes: []Episode{
+			{
+				ID:              "ep1",
+				Title:           "Episode 1",
+				Description:     "Desc 1",
+				PublishDatetime: "2023-01-01T00:00:00Z",
+				Audio: EpisodeAudio{
+					URL:      "http://audio.mp3",
+					Duration: 60.0,
 				},
 			},
 		},
@@ -201,25 +201,25 @@ func TestPodcastsToRss_Basic(t *testing.T) {
 }
 
 func TestPodcastsToRss_ContextCancel(t *testing.T) {
-	data := map[string]interface{}{
-		"podcast": map[string]interface{}{
-			"title":       "Test",
-			"description": "Desc",
-			"authorName":  "Author",
-			"language":    "en",
-			"images": map[string]interface{}{
-				"coverImageUrl": "http://cover.jpg",
-			},
+	data := &PodcastData{
+		Podcast: Podcast{
+			Title:       "Test",
+			Description: "Desc",
+			AuthorName:  "Author",
+			Language:    "en",
+			Images: struct {
+				CoverImageURL string `json:"coverImageUrl"`
+			}{CoverImageURL: "http://cover.jpg"},
 		},
-		"episodes": []interface{}{
-			map[string]interface{}{
-				"id":              "ep1",
-				"title":           "Episode 1",
-				"description":     "Desc 1",
-				"publishDatetime": "2023-01-01T00:00:00Z",
-				"audio": map[string]interface{}{
-					"url":      "http://audio.mp3",
-					"duration": 60.0,
+		Episodes: []Episode{
+			{
+				ID:              "ep1",
+				Title:           "Episode 1",
+				Description:     "Desc 1",
+				PublishDatetime: "2023-01-01T00:00:00Z",
+				Audio: EpisodeAudio{
+					URL:      "http://audio.mp3",
+					Duration: 60.0,
 				},
 			},
 		},
@@ -257,8 +257,76 @@ func TestURLHeadInfo_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
 
-	_, _, err := URLHeadInfo(ctx, client, "cancel-ep", srv.URL, nil, hc, time.Hour)
+	_, _, err := URLHeadInfo(ctx, client, "cancel-ep", srv.URL, nil, hc, time.Hour, nil)
 	if err != context.Canceled {
 		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestURLHeadInfo_404NoCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	c, _ := NewFileCache(dir)
+	_, _, err := URLHeadInfo(context.Background(), srv.Client(), "ep404", srv.URL, nil, c, time.Hour, nil)
+	if err == nil {
+		t.Fatalf("expected error for 404")
+	}
+	// cache must be empty — no poisoning
+	if _, ok := c.Get("ep404"); ok {
+		t.Fatalf("expected cache to be empty after 404")
+	}
+}
+
+func TestURLHeadInfo_500RetriesThenFails(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	c, _ := NewFileCache(dir)
+	_, _, err := URLHeadInfo(context.Background(), srv.Client(), "ep500", srv.URL, nil, c, time.Hour, nil)
+	if err == nil {
+		t.Fatalf("expected error for persistent 500")
+	}
+	if calls != 3 {
+		t.Fatalf("expected 3 attempts (retries), got %d", calls)
+	}
+	if _, ok := c.Get("ep500"); ok {
+		t.Fatalf("expected cache to be empty after 500")
+	}
+}
+
+func TestURLHeadInfo_500Then200Retries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Length", "42")
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	c, _ := NewFileCache(dir)
+	cl, ct, err := URLHeadInfo(context.Background(), srv.Client(), "ep500to200", srv.URL, nil, c, time.Hour, nil)
+	if err != nil {
+		t.Fatalf("expected success after retries: %v", err)
+	}
+	if cl != "42" || ct != "audio/mpeg" {
+		t.Fatalf("unexpected result: %s %s", cl, ct)
+	}
+	if _, ok := c.Get("ep500to200"); !ok {
+		t.Fatalf("expected cache to be populated after successful retry")
 	}
 }

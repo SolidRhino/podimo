@@ -14,49 +14,43 @@ import (
 	"github.com/eduncan911/podcast"
 )
 
-func PodcastsToRss(ctx context.Context, podcastID string, data map[string]interface{}, locale string, headCache *FileCache, publicFeeds bool, headCacheTTL time.Duration, httpClient *http.Client, logger *slog.Logger) ([]byte, error) {
-	podcastData, _ := data["podcast"].(map[string]interface{})
-	episodes, _ := data["episodes"].([]interface{})
+func PodcastsToRss(ctx context.Context, podcastID string, data *PodcastData, locale string, headCache *FileCache, publicFeeds bool, headCacheTTL time.Duration, httpClient *http.Client, logger *slog.Logger) ([]byte, error) {
+	if data == nil {
+		data = &PodcastData{}
+	}
 
 	title := GetPodcastName(data)
-	if title == "Unknown" && len(episodes) > 0 {
-		if ep, ok := episodes[0].(map[string]interface{}); ok {
-			title, _ = ep["podcastName"].(string)
-		}
+	if title == "Unknown" && len(data.Episodes) > 0 {
+		title = data.Episodes[0].PodcastName
 	}
 	if title == "" {
 		title = "Unknown"
 	}
 
-	description, _ := podcastData["description"].(string)
+	description := data.Podcast.Description
 	if description == "" {
 		description = title
 	}
 
 	p := podcast.New(title, fmt.Sprintf("https://podimo.com/shows/%s", podcastID), description, nil, nil)
 
-	images, _ := podcastData["images"].(map[string]interface{})
-	coverImage, _ := images["coverImageUrl"].(string)
-	if coverImage == "" && len(episodes) > 0 {
-		if ep, ok := episodes[0].(map[string]interface{}); ok {
-			coverImage, _ = ep["imageUrl"].(string)
-		}
+	coverImage := data.Podcast.Images.CoverImageURL
+	if coverImage == "" && len(data.Episodes) > 0 {
+		coverImage = data.Episodes[0].ImageURL
 	}
 	if coverImage != "" {
 		p.AddImage(coverImage)
 	}
 
-	language, _ := podcastData["language"].(string)
+	language := data.Podcast.Language
 	if language == "" {
 		language = locale
 	}
 	p.Language = language
 
-	author, _ := podcastData["authorName"].(string)
-	if author == "" && len(episodes) > 0 {
-		if ep, ok := episodes[0].(map[string]interface{}); ok {
-			author, _ = ep["artist"].(string)
-		}
+	author := data.Podcast.AuthorName
+	if author == "" && len(data.Episodes) > 0 {
+		author = data.Episodes[0].Artist
 	}
 	if author != "" {
 		p.AddAuthor(author, "")
@@ -67,7 +61,7 @@ func PodcastsToRss(ctx context.Context, podcastID string, data map[string]interf
 	}
 
 	// Process episodes in chunks of 5 with parallel HEAD requests
-	for _, chunk := range chunks(episodes, 5) {
+	for _, chunk := range chunkEpisodes(data.Episodes, 5) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -75,16 +69,12 @@ func PodcastsToRss(ctx context.Context, podcastID string, data map[string]interf
 		var wg sync.WaitGroup
 		for i, ep := range chunk {
 			wg.Add(1)
-			go func(idx int, raw interface{}) {
+			go func(idx int, episode Episode) {
 				defer wg.Done()
 				if ctx.Err() != nil {
 					return
 				}
-				episode, ok := raw.(map[string]interface{})
-				if !ok {
-					return
-				}
-				item, err := buildFeedItem(ctx, episode, locale, headCache, headCacheTTL, httpClient)
+				item, err := buildFeedItem(ctx, episode, locale, headCache, headCacheTTL, httpClient, logger)
 				if err == nil && item.Title != "" {
 					items[idx] = item
 				} else if err != nil && logger != nil {
@@ -110,7 +100,7 @@ func PodcastsToRss(ctx context.Context, podcastID string, data map[string]interf
 	return buf.Bytes(), nil
 }
 
-func buildFeedItem(ctx context.Context, episode map[string]interface{}, locale string, headCache *FileCache, headCacheTTL time.Duration, httpClient *http.Client) (podcast.Item, error) {
+func buildFeedItem(ctx context.Context, episode Episode, locale string, headCache *FileCache, headCacheTTL time.Duration, httpClient *http.Client, logger *slog.Logger) (podcast.Item, error) {
 	var item podcast.Item
 
 	url, duration := ExtractAudioURL(episode)
@@ -118,20 +108,16 @@ func buildFeedItem(ctx context.Context, episode map[string]interface{}, locale s
 		return item, fmt.Errorf("no audio URL")
 	}
 
-	title, _ := episode["title"].(string)
-	description, _ := episode["description"].(string)
+	item.Title = episode.Title
+	item.Description = episode.Description
 
-	item.Title = title
-	item.Description = description
-
-	imageURL, _ := episode["imageUrl"].(string)
-	if imageURL != "" {
-		item.AddImage(imageURL)
+	if episode.ImageURL != "" {
+		item.AddImage(episode.ImageURL)
 	}
 
-	pubDateStr, _ := episode["publishDatetime"].(string)
+	pubDateStr := episode.PublishDatetime
 	if pubDateStr == "" {
-		pubDateStr, _ = episode["datetime"].(string)
+		pubDateStr = episode.Datetime
 	}
 	if pubDateStr != "" {
 		if t, err := time.Parse(time.RFC3339, pubDateStr); err == nil {
@@ -141,20 +127,19 @@ func buildFeedItem(ctx context.Context, episode map[string]interface{}, locale s
 
 	item.AddDuration(int64(duration))
 
-	episodeID, _ := episode["id"].(string)
-	item.GUID = episodeID
+	item.GUID = episode.ID
 
 	headers := map[string]string{
 		"user-os":        "android",
 		"user-agent":     "Podimo/2.45.1 build 566/Android 33",
 		"user-version":   "2.45.1",
 		"user-locale":    locale,
-		"user-unique-id": randomHexID(16),
+		"user-unique-id": RandomHexID(16),
 	}
 
 	headCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	contentLength, contentType, err := URLHeadInfo(headCtx, httpClient, episodeID, url, headers, headCache, headCacheTTL)
+	contentLength, contentType, err := URLHeadInfo(headCtx, httpClient, episode.ID, url, headers, headCache, headCacheTTL, logger)
 	if err != nil {
 		// Graceful fallback: use defaults so one bad HEAD doesn't abort the whole feed
 		contentLength = "0"
@@ -193,38 +178,26 @@ func enclosureTypeFromContentType(ct string) podcast.EnclosureType {
 	}
 }
 
-func ExtractAudioURL(episode map[string]interface{}) (string, int) {
-	duration := 0
-	var url string
-
-	if audio, ok := episode["audio"].(map[string]interface{}); ok {
-		if u, ok := audio["url"].(string); ok {
-			url = u
-		}
-		if d, ok := audio["duration"].(float64); ok {
-			duration = int(d)
-		}
+func ExtractAudioURL(episode Episode) (string, int) {
+	if episode.Audio.URL != "" {
+		return episode.Audio.URL, int(episode.Audio.Duration)
 	}
 
+	url := episode.StreamMedia.URL
+	duration := int(episode.StreamMedia.Duration)
 	if url == "" {
-		if streamMedia, ok := episode["streamMedia"].(map[string]interface{}); ok {
-			if u, ok := streamMedia["url"].(string); ok {
-				url = u
-			}
-			if d, ok := streamMedia["duration"].(float64); ok {
-				duration = int(d)
-			}
-			if strings.Contains(url, "hls-media") && strings.Contains(url, "/main.m3u8") {
-				url = strings.Replace(url, "hls-media", "audios", 1)
-				url = strings.Replace(url, "/main.m3u8", ".mp3", 1)
-			}
-		}
+		return "", 0
+	}
+
+	if strings.Contains(url, "hls-media") && strings.Contains(url, "/main.m3u8") {
+		url = strings.Replace(url, "hls-media", "audios", 1)
+		url = strings.Replace(url, "/main.m3u8", ".mp3", 1)
 	}
 
 	return url, duration
 }
 
-func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, headers map[string]string, headCache *FileCache, cacheTTL time.Duration) (string, string, error) {
+func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, headers map[string]string, headCache *FileCache, cacheTTL time.Duration, logger *slog.Logger) (string, string, error) {
 	if entry, ok := headCache.Get(id); ok {
 		if m, ok := entry.(map[string]interface{}); ok {
 			length, _ := m["length"].(string)
@@ -258,6 +231,23 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 			return "0", "audio/mpeg", err
 		}
 
+		// Close the body on every path so non-2xx responses never leak.
+		resp.Body.Close()
+
+		// Reject non-2xx before reading/caching headers: a 404/500/redirect body
+		// must not poison the cache with bogus content-length/type.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if attempt < retries-1 && (resp.StatusCode == 429 || resp.StatusCode >= 500) {
+				select {
+				case <-ctx.Done():
+					return "0", "audio/mpeg", ctx.Err()
+				case <-time.After(1 * time.Second):
+				}
+				continue
+			}
+			return "0", "audio/mpeg", fmt.Errorf("HEAD %s: status %d", urlStr, resp.StatusCode)
+		}
+
 		contentLength := "0"
 		if cl := resp.Header.Get("Content-Length"); cl != "" {
 			contentLength = cl
@@ -268,9 +258,9 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 			contentType = ct
 		}
 
-		resp.Body.Close()
-
-		headCache.Set(id, map[string]interface{}{"length": contentLength, "type": contentType}, cacheTTL)
+		if err := headCache.Set(id, map[string]interface{}{"length": contentLength, "type": contentType}, cacheTTL); err != nil && logger != nil {
+			logger.Warn("Failed to cache HEAD info", "episode_id", id, "error", err)
+		}
 		return contentLength, contentType, nil
 	}
 
@@ -279,6 +269,18 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 
 func chunks(items []interface{}, n int) [][]interface{} {
 	var out [][]interface{}
+	for i := 0; i < len(items); i += n {
+		end := i + n
+		if end > len(items) {
+			end = len(items)
+		}
+		out = append(out, items[i:end])
+	}
+	return out
+}
+
+func chunkEpisodes(items []Episode, n int) [][]Episode {
+	var out [][]Episode
 	for i := 0; i < len(items); i += n {
 		end := i + n
 		if end > len(items) {
