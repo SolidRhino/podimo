@@ -16,26 +16,26 @@ import (
 )
 
 type Config struct {
-	Hostname          string `mapstructure:"hostname"`
-	BindHost          string `mapstructure:"bind_host"`
-	Protocol          string `mapstructure:"protocol"`
-	HTTPProxy         string `mapstructure:"http_proxy"`
-	ZenRowsAPI        string `mapstructure:"zenrows_api"`
-	ScraperAPI        string `mapstructure:"scraper_api"`
-	CacheDir          string `mapstructure:"cache_dir"`
-	BlockListFile     string `mapstructure:"block_list_file"`
-	Debug             bool   `mapstructure:"debug"`
-	LocalCredentials  bool   `mapstructure:"local_credentials"`
-	Email             string `mapstructure:"email"`
-	Password          string `mapstructure:"password"`
-	GraphQLURL        string `mapstructure:"graphql_url"`
-	StoreTokensOnDisk bool   `mapstructure:"store_tokens_on_disk"`
-	TokenCacheTime    time.Duration `mapstructure:"token_cache_time"`
-	PodcastCacheTime  time.Duration `mapstructure:"podcast_cache_time"`
-	HeadCacheTime     time.Duration `mapstructure:"head_cache_time"`
-	PublicFeeds       bool   `mapstructure:"public_feeds"`
-	Locales           []string `mapstructure:"-"`
-	Regions           []Region `mapstructure:"-"`
+	Hostname          string              `mapstructure:"hostname"`
+	BindHost          string              `mapstructure:"bind_host"`
+	Protocol          string              `mapstructure:"protocol"`
+	HTTPProxy         string              `mapstructure:"http_proxy"`
+	ZenRowsAPI        string              `mapstructure:"zenrows_api"`
+	ScraperAPI        string              `mapstructure:"scraper_api"`
+	CacheDir          string              `mapstructure:"cache_dir"`
+	BlockListFile     string              `mapstructure:"block_list_file"`
+	Debug             bool                `mapstructure:"debug"`
+	LocalCredentials  bool                `mapstructure:"local_credentials"`
+	Email             string              `mapstructure:"email"`
+	Password          string              `mapstructure:"password"`
+	GraphQLURL        string              `mapstructure:"graphql_url"`
+	StoreTokensOnDisk bool                `mapstructure:"store_tokens_on_disk"`
+	TokenCacheTime    time.Duration       `mapstructure:"token_cache_time"`
+	PodcastCacheTime  time.Duration       `mapstructure:"podcast_cache_time"`
+	HeadCacheTime     time.Duration       `mapstructure:"head_cache_time"`
+	PublicFeeds       bool                `mapstructure:"public_feeds"`
+	Locales           []string            `mapstructure:"-"`
+	Regions           []Region            `mapstructure:"-"`
 	Blocked           map[string]struct{} `mapstructure:"-"`
 }
 
