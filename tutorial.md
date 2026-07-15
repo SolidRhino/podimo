@@ -53,7 +53,7 @@ Create a `.env` file to avoid re-entering credentials:
 cat > .env <<EOF
 PODIMO_HOSTNAME=your.ip.address:12104
 PODIMO_BIND_HOST=0.0.0.0:12104
-LOCAL_CREDENTIALS=true
+PODIMO_LOCAL_CREDENTIALS=true
 PODIMO_EMAIL=your-email@example.com
 PODIMO_PASSWORD=your-password
 EOF
@@ -73,85 +73,62 @@ docker run -d \
 
 ---
 
-## Method 2: Raspberry Pi (Python virtualenv)
+## Method 2: Direct install (Go binary)
 
-This method runs the tool directly on your Pi without Docker.
+This method runs the tool directly on your machine or Pi without Docker.
 
 ### Requirements
 
-- Raspberry Pi (2/3/4/5 or Zero 2 W) with Raspberry Pi OS
+- Go 1.26+ (install from [go.dev/dl](https://go.dev/dl/) or your package manager)
 - Network connection
 
-### 1. Prepare your Pi
-
-Flash Raspberry Pi OS using the [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Enable SSH if you don't have a display.
-
-### 2. Connect and update
-
-Open a terminal on your computer and SSH into the Pi:
-
-```sh
-ssh pi@your-pi-ip-address
-```
-
-Update the system:
-
-```sh
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y git python3-venv libxml2-dev libxslt-dev gcc
-```
-
-### 3. Install the tool
+### 1. Install the tool
 
 ```sh
 git clone https://github.com/SolidRhino/podimo
 cd podimo
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+go build -o podimo-rss .
 ```
 
-### 4. Configure
+### 2. Configure
 
 ```sh
-# Copy the example environment file
-cp .env.example .env
-nano .env
+# Copy the example config
+cp config.example.yaml config.yaml
+nano config.yaml
 ```
 
-Edit the following lines in `.env`:
+Edit the following lines in `config.yaml`:
 
-```sh
-# Your Pi's local IP address (find it with: hostname -I)
-PODIMO_HOSTNAME="192.168.1.50:12104"
+```yaml
+# Your machine's local IP address (find it with: hostname -I)
+hostname: "192.168.1.50:12104"
 
 # Listen on all interfaces so other devices can reach it
-PODIMO_BIND_HOST="0.0.0.0:12104"
+bind_host: "0.0.0.0:12104"
 
 # (Optional) Store credentials server-side instead of embedding them in URLs
-LOCAL_CREDENTIALS=true
-PODIMO_EMAIL="your-podimo-email@example.com"
-PODIMO_PASSWORD="your-podimo-password"
+local_credentials: true
+email: "your-podimo-email@example.com"
+password: "your-podimo-password"
 ```
 
 Save with **Ctrl+X** → **Y** → **Enter**.
 
-### 5. Start the server
+### 3. Start the server
 
 ```sh
-python main.py
+./podimo-rss
 ```
 
-Visit `http://your-pi-ip-address:12104` in your browser.
+Visit `http://your-ip-address:12104` in your browser.
 
-To run it in the background (so it keeps running after you close SSH):
+To run it in the background as a systemd service:
 
 ```sh
-nohup python main.py &
-cat nohup.out
+just install
+just start
 ```
-
-Or use a process manager like `systemd` or `pm2` for production setups.
 
 ---
 
@@ -196,7 +173,7 @@ If Podimo blocks your requests, use a proxy:
 2. Add to your `.env`:
 
 ```sh
-ZENROWS_API="your-api-key"
+PODIMO_ZENROWS_API="your-api-key"
 ```
 
 **ScraperAPI** (alternative):
@@ -204,7 +181,7 @@ ZENROWS_API="your-api-key"
 2. Add to your `.env`:
 
 ```sh
-SCRAPER_API="your-api-key"
+PODIMO_SCRAPER_API="your-api-key"
 ```
 
 Restart the container or server after editing `.env`.
@@ -237,14 +214,14 @@ docker stop podimo-rss && docker rm podimo-rss
 # Then re-run the docker run command from Method 1
 ```
 
-**Python:**
+**Direct install (Go):**
 
 ```sh
 cd podimo
 git pull
-source venv/bin/activate
-pip install -r requirements.txt
-python main.py
+go build -o podimo-rss .
+# If running as a systemd service:
+just restart
 ```
 
 ### Logs
@@ -255,10 +232,10 @@ python main.py
 docker logs -f podimo-rss
 ```
 
-**Python:**
+**Direct install (systemd):**
 
 ```sh
-tail -f nohup.out
+just logs
 ```
 
 ### Getting help
@@ -273,7 +250,7 @@ tail -f nohup.out
 
 - **Never commit your `.env` file** — it contains your Podimo password
 - **Use HTTPS in production** — Basic Auth credentials are sent in cleartext over HTTP
-- **Set `LOCAL_CREDENTIALS=true` for personal use** — this avoids embedding your password in generated RSS URLs
+- **Set `PODIMO_LOCAL_CREDENTIALS=true` for personal use** — this avoids embedding your password in generated RSS URLs
 
 ---
 

@@ -117,14 +117,16 @@ docker stop podimo-rss && docker rm podimo-rss
 
 Or with Docker Compose:
 
+```sh
 docker compose build --pull
 docker compose up -d
+```
 
 ### Environment files
 
 | File | Use when | Why |
 |------|----------|-----|
-| `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/tmp/podimo-rss-cache` volume path, `LOCAL_CREDENTIALS=true` |
+| `.env.docker` | **Running in Docker** | Pre-configured for containers: `0.0.0.0` bind host, `/tmp/podimo-rss-cache` volume path, `PODIMO_LOCAL_CREDENTIALS=true` |
 | `.env.example` | Local Go install | Generic template — uncomment the lines you need |
 
 See [.env.docker](.env.docker) for Docker-specific defaults, or [.env.example](.env.example) for the full option reference.
@@ -165,8 +167,8 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 |----------|-------------|------|
 | `GET /` | Web interface (form + search) | — |
 | `GET /health` | JSON health probe for Docker/K8s | — |
-| `GET /search?q=...` | Search podcasts by name | Basic Auth or `LOCAL_CREDENTIALS` |
-| `GET /subscriptions` | List followed podcasts | Basic Auth or `LOCAL_CREDENTIALS` |
+| `GET /search?q=...` | Search podcasts by name | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
+| `GET /subscriptions` | List followed podcasts | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /feed/<id>.xml` | RSS feed (credentials in URL) | Basic Auth |
 | `GET /feed/<user>/<pass>/<id>.xml` | RSS feed (credentials in path) | — |
 
@@ -174,19 +176,19 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 
 ## Configuration
 
-All configuration is done via environment variables or the `.env` file. Run `just config` to edit it interactively.
+All configuration is done via `config.yaml` (preferred), environment variables (`PODIMO_` prefix), or `.env` file. Run `just config` to edit `config.yaml` interactively.
 
 Key settings:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PODIMO_BIND_HOST` | `127.0.0.1:12104` | Where the server listens |
-| `LOCAL_CREDENTIALS` | `false` | Store credentials server-side (recommended for personal use) |
-| `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials when `LOCAL_CREDENTIALS=true` |
-| `ZENROWS_API` / `SCRAPER_API` | — | Anti-bot proxy keys |
-| `PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
+| `PODIMO_LOCAL_CREDENTIALS` | `false` | Store credentials server-side (recommended for personal use) |
+| `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials when `PODIMO_LOCAL_CREDENTIALS=true` |
+| `PODIMO_ZENROWS_API` / `PODIMO_SCRAPER_API` | — | Anti-bot proxy keys |
+| `PODIMO_PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
 
-Full reference: [.env.example](.env.example)
+Full reference: [config.example.yaml](config.example.yaml) or [.env.example](.env.example)
 
 ---
 
@@ -197,12 +199,12 @@ Depending on your usage patterns, Podimo may trigger anti-bot protections. You c
 ### Zenrows
 
 1. Create a free account at [app.zenrows.com/register](https://app.zenrows.com/register)
-2. Set the `ZENROWS_API` environment variable to your API key
+2. Set the `PODIMO_ZENROWS_API` environment variable to your key (or `zenrows_api` in `config.yaml`)
 
 ### ScraperAPI
 
 1. Create a free account at [dashboard.scraperapi.com/signup](https://dashboard.scraperapi.com/signup)
-2. Set the `SCRAPER_API` environment variable to your API key
+2. Set the `PODIMO_SCRAPER_API` environment variable to your key (or `scraper_api` in `config.yaml`)
 
 ---
 
@@ -212,9 +214,9 @@ The tool handles credentials as follows:
 
 - **Username and password** are used only to obtain an access token and are never written to disk
 - **A cryptographic hash** of your credentials is kept in memory as a cache key
-- **The Podimo access token** is cached in memory (or on disk if `STORE_TOKENS_ON_DISK=true`)
+- **The Podimo access token** is cached in memory (or on disk if `PODIMO_STORE_TOKENS_ON_DISK=true`)
 
-Nothing is ever logged.
+Credentials and tokens are never logged. Request URLs are redacted to scrub embedded passwords before logging.
 
 ---
 
@@ -242,15 +244,17 @@ act -j test -W .github/workflows/test.yml
 ### Project structure
 
 ```
+main.go          → HTTP server, routes, handlers, RSS feed serving
+config.go        → Environment/YAML config loading (Viper), validation
 podimo/
-  cache.go      → File-based JSON cache with TTL
-  client.go     → GraphQL client (auth, search, episodes)
-  graphql.go    → Thin GraphQL HTTP wrapper
-  rss.go        → iTunes RSS generation
-  *_test.go     → Go test suite
-templates/
-  index.html    → Web form (embedded via //go:embed)
-  feed_location.html → Result page with QR code
+  client.go      → GraphQL API client (auth, episodes, search, subscriptions)
+  graphql.go     → Thin GraphQL HTTP wrapper
+  rss.go         → iTunes RSS generation with parallel HEAD requests
+  cache.go       → File-based JSON cache with TTL
+  boundedmap.go  → Generic in-memory LRU cache with TTL eviction
+  *_test.go      → Go test suite
+templates/       → HTML templates (embedded via //go:embed)
+static/          → Stylesheet (embedded via //go:embed)
 ```
 
 ---

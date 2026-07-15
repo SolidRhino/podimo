@@ -248,7 +248,6 @@ border-radius: 0.375rem;
 
 - Alpine.js `x-data` tracks `copied` state
 - Button text swaps for 2 seconds after successful copy
-- `.copy-feedback` class provides an inline confirmation label with fade transition
 
 ### QR Code
 

@@ -15,9 +15,9 @@ default:
 build:
     {{go_cmd}} build -o {{binary}} .
 
-# Run the Go test suite
+# Run the Go test suite with race detection
 test:
-    {{go_cmd}} test ./... -v
+    {{go_cmd}} test -race ./... -v
 
 # Build and run the server locally (uses ./config.yaml if found)
 run: build
@@ -35,7 +35,7 @@ run-config configfile: build
 # Run go vet and gofmt
 lint:
     {{go_cmd}} vet ./...
-    gofmt -d .
+    test -z "$(gofmt -l .)" || { echo "Files need gofmt:"; gofmt -l .; exit 1; }
 
 # Format Go source files
 format:
@@ -131,6 +131,17 @@ update:
         git checkout "$UPDATE_GIT_TAG"
     fi
     echo "Updated to version $UPDATE_GIT_TAG"
+    if test -f "config.yaml" && test -r "config.yaml"; then
+        if ! git diff --name-only --no-index -- config.example.yaml config.yaml >/dev/null 2>&1; then
+            echo
+            echo "#############################################################"
+            echo "# Your config differs from example config in                #"
+            echo "# config.example.yaml! New options might not yet be set.    #"
+            echo "#############################################################"
+            echo
+            git diff --no-index -- config.yaml config.example.yaml || true
+        fi
+    fi
     if test -f ".env"; then
         if test -r ".env"; then
             git diff --name-only --no-index -- .env.example .env >/dev/null || {
