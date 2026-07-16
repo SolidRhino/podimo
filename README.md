@@ -245,7 +245,7 @@ act -j test -W .github/workflows/test.yml
 
 ```
 main.go          → HTTP server, routes, handlers, RSS feed serving
-config.go        → Environment/YAML config loading (Viper), validation
+config.go        → Environment/YAML config loading (koanf), validation
 podimo/
   client.go      → GraphQL API client (auth, episodes, search, subscriptions)
   graphql.go     → Thin GraphQL HTTP wrapper

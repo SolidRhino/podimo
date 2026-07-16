@@ -12,32 +12,36 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/joho/godotenv"
-	"github.com/spf13/viper"
+	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/confmap"
+	envprovider "github.com/knadh/koanf/providers/env/v2"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
 )
 
 type Config struct {
-	Hostname           string              `mapstructure:"hostname"`
-	BindHost           string              `mapstructure:"bind_host"`
-	Protocol           string              `mapstructure:"protocol"`
-	HTTPProxy          string              `mapstructure:"http_proxy"`
-	ZenRowsAPI         string              `mapstructure:"zenrows_api"`
-	ScraperAPI         string              `mapstructure:"scraper_api"`
-	CacheDir           string              `mapstructure:"cache_dir"`
-	BlockListFile      string              `mapstructure:"block_list_file"`
-	Debug              bool                `mapstructure:"debug"`
-	LocalCredentials   bool                `mapstructure:"local_credentials"`
-	Email              string              `mapstructure:"email"`
-	Password           string              `mapstructure:"password"`
-	GraphQLURL         string              `mapstructure:"graphql_url"`
-	StoreTokensOnDisk  bool                `mapstructure:"store_tokens_on_disk"`
-	TokenCacheTime     time.Duration       `mapstructure:"token_cache_time"`
-	PodcastCacheTime   time.Duration       `mapstructure:"podcast_cache_time"`
-	HeadCacheTime      time.Duration       `mapstructure:"head_cache_time"`
-	PublicFeeds        bool                `mapstructure:"public_feeds"`
-	TrustedProxyHeader string              `mapstructure:"trusted_proxy_header"`
-	Locales            []string            `mapstructure:"-"`
-	Regions            []Region            `mapstructure:"-"`
-	Blocked            map[string]struct{} `mapstructure:"-"`
+	Hostname           string              `koanf:"hostname"`
+	BindHost           string              `koanf:"bind_host"`
+	Protocol           string              `koanf:"protocol"`
+	HTTPProxy          string              `koanf:"http_proxy"`
+	ZenRowsAPI         string              `koanf:"zenrows_api"`
+	ScraperAPI         string              `koanf:"scraper_api"`
+	CacheDir           string              `koanf:"cache_dir"`
+	BlockListFile      string              `koanf:"block_list_file"`
+	Debug              bool                `koanf:"debug"`
+	LocalCredentials   bool                `koanf:"local_credentials"`
+	Email              string              `koanf:"email"`
+	Password           string              `koanf:"password"`
+	GraphQLURL         string              `koanf:"graphql_url"`
+	StoreTokensOnDisk  bool                `koanf:"store_tokens_on_disk"`
+	TokenCacheTime     time.Duration       `koanf:"token_cache_time"`
+	PodcastCacheTime   time.Duration       `koanf:"podcast_cache_time"`
+	HeadCacheTime      time.Duration       `koanf:"head_cache_time"`
+	PublicFeeds        bool                `koanf:"public_feeds"`
+	TrustedProxyHeader string              `koanf:"trusted_proxy_header"`
+	Locales            []string            `koanf:"-"`
+	Regions            []Region            `koanf:"-"`
+	Blocked            map[string]struct{} `koanf:"-"`
 }
 
 type Region struct {
@@ -48,47 +52,64 @@ type Region struct {
 func LoadConfig(configFile string) (*Config, error) {
 	_ = godotenv.Load(".env")
 
-	v := viper.New()
-	v.SetEnvPrefix("PODIMO")
-	v.AutomaticEnv()
+	k := koanf.New(".")
 
-	// Defaults
-	v.SetDefault("hostname", "localhost:12104")
-	v.SetDefault("bind_host", "127.0.0.1:12104")
-	v.SetDefault("protocol", "http")
-	v.SetDefault("cache_dir", "./cache")
-	v.SetDefault("block_list_file", "./.block-list")
-	v.SetDefault("debug", false)
-	v.SetDefault("local_credentials", false)
-	v.SetDefault("graphql_url", "https://podimo.com/graphql")
-	v.SetDefault("store_tokens_on_disk", true)
-	v.SetDefault("token_cache_time", 5*24*time.Hour)
-	v.SetDefault("podcast_cache_time", 6*time.Hour)
-	v.SetDefault("head_cache_time", 7*24*time.Hour)
-	v.SetDefault("public_feeds", false)
-	v.SetDefault("trusted_proxy_header", "")
-
-	// BindEnv for keys that have no SetDefault and may appear only via env vars.
-	// Without this, Viper's Unmarshal skips keys it doesn't "know" — even though
-	// AutomaticEnv makes v.GetString("email") work, Unmarshal leaves the struct
-	// field empty. This bit local_credentials mode (email/password were "").
-	for _, key := range []string{"email", "password", "http_proxy", "zenrows_api", "scraper_api"} {
-		if err := v.BindEnv(key); err != nil {
-			return nil, fmt.Errorf("bind env %q: %w", key, err)
-		}
+	// 1. Defaults — loaded first (lowest precedence). Durations are stored as
+	//    their .String() form so strictDurationHook handles them uniformly with
+	//    file/env string values; bool defaults are native bools (trusted).
+	defaults := map[string]any{
+		"hostname":             "localhost:12104",
+		"bind_host":            "127.0.0.1:12104",
+		"protocol":             "http",
+		"cache_dir":            "./cache",
+		"block_list_file":      "./.block-list",
+		"debug":                false,
+		"local_credentials":    false,
+		"graphql_url":          "https://podimo.com/graphql",
+		"store_tokens_on_disk": true,
+		"token_cache_time":     (5 * 24 * time.Hour).String(),
+		"podcast_cache_time":   (6 * time.Hour).String(),
+		"head_cache_time":      (7 * 24 * time.Hour).String(),
+		"public_feeds":         false,
+		"trusted_proxy_header": "",
+	}
+	if err := k.Load(confmap.Provider(defaults, ""), nil); err != nil {
+		return nil, fmt.Errorf("load defaults: %w", err)
 	}
 
-	if configFile != "" {
-		v.SetConfigFile(configFile)
-		if err := v.ReadInConfig(); err != nil {
-			return nil, fmt.Errorf("read config file %q: %w", configFile, err)
+	// 2. File — explicit --config path, or search /etc/podimo-rss/ then .
+	//    (optional: no file is okay and defaults+env still apply).
+	yamlPath := configFile
+	if yamlPath == "" {
+		for _, candidate := range []string{"/etc/podimo-rss/config.yaml", "./config.yaml"} {
+			if _, err := os.Stat(candidate); err == nil {
+				yamlPath = candidate
+				break
+			}
 		}
-	} else {
-		v.SetConfigName("config")
-		v.SetConfigType("yaml")
-		v.AddConfigPath("/etc/podimo-rss/")
-		v.AddConfigPath(".")
-		_ = v.ReadInConfig() // optional: no file is okay
+	}
+	if yamlPath != "" {
+		if err := k.Load(file.Provider(yamlPath), yaml.Parser()); err != nil {
+			return nil, fmt.Errorf("read config file %q: %w", yamlPath, err)
+		}
+	} else if configFile != "" {
+		// Explicit --config path that doesn't exist must hard-fail.
+		return nil, fmt.Errorf("read config file %q: %w", configFile, os.ErrNotExist)
+	}
+
+	// 3. Env — PODIMO_* prefix, strip prefix + lowercase to flat snake_case.
+	//    Empty values are skipped to preserve "empty = unset" semantics, so
+	//    blanked PODIMO_* vars don't clobber file/default values.
+	if err := k.Load(envprovider.Provider("", envprovider.Opt{
+		Prefix: "PODIMO_",
+		TransformFunc: func(key, val string) (string, any) {
+			if val == "" {
+				return "", nil // skip empty env vars
+			}
+			return strings.ToLower(strings.TrimPrefix(key, "PODIMO_")), val
+		},
+	}), nil); err != nil {
+		return nil, fmt.Errorf("load env: %w", err)
 	}
 
 	cfg := &Config{
@@ -111,15 +132,16 @@ func LoadConfig(configFile string) (*Config, error) {
 		Blocked: make(map[string]struct{}),
 	}
 
-	hook := mapstructure.ComposeDecodeHookFunc(
-		strictBoolHook,
-		strictDurationHook,
-	)
-
-	if err := v.Unmarshal(cfg, func(dc *mapstructure.DecoderConfig) {
-		dc.DecodeHook = hook
-		// Preserve zero values where appropriate
-		dc.ZeroFields = false
+	// 4. Decode with strict hooks: strictBoolHook rejects invalid booleans,
+	//    strictDurationHook rejects invalid durations and accepts bare-integer-seconds.
+	if err := k.UnmarshalWithConf("", cfg, koanf.UnmarshalConf{
+		DecoderConfig: &mapstructure.DecoderConfig{
+			DecodeHook: mapstructure.ComposeDecodeHookFunc(
+				strictBoolHook,
+				strictDurationHook,
+			),
+			ZeroFields: false,
+		},
 	}); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}

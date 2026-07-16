@@ -590,8 +590,8 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 func TestLoadConfig_WithYAMLFile(t *testing.T) {
 	// Run from a temp dir so godotenv.Load(".env") inside LoadConfig finds no
 	// .env file, and blank any PODIMO_* vars leaked into the process env by
-	// earlier tests/godotenv so Viper (which treats empty env as unset) falls
-	// back to the YAML file values instead of the repo .env.
+	// earlier tests/godotenv so the koanf env provider's empty-skip transform
+	// drops them and falls back to the YAML file values instead of the repo .env.
 	t.Chdir(t.TempDir())
 	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
 		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
@@ -651,11 +651,11 @@ public_feeds: true
 	}
 }
 
-// TestLoadConfig_EnvOnlyCredentials guards against the Viper AutomaticEnv +
-// Unmarshal gap: keys with no SetDefault and no config-file entry were left
-// empty by Unmarshal even when the matching PODIMO_ env var was set. This
-// caused local_credentials mode to see empty email/password and report
-// "Authentication required" with no logged reason.
+// TestLoadConfig_EnvOnlyCredentials guards that env-only credentials
+// (email/password with no file or default entry) still populate the struct.
+// Under koanf the env provider emits all PODIMO_* keys directly — no BindEnv
+// registry is needed — so this remains a meaningful regression guard for
+// local_credentials mode seeing populated email/password.
 func TestLoadConfig_EnvOnlyCredentials(t *testing.T) {
 	t.Setenv("PODIMO_EMAIL", "envonly@example.com")
 	t.Setenv("PODIMO_PASSWORD", "envsecret")

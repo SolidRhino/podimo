@@ -54,7 +54,7 @@ main_test.go     → Handler tests (health, index, feed, search, subscriptions, 
 | File | What it does |
 |------|-------------|
 | `main.go` | Entry point. Defines routes, middleware (logging, rate limiting), server timeouts, and credential redaction. Generates RSS XML via `podimo.PodcastsToRss`. |
-| `config.go` | **Hybrid config loader:** uses Viper with a flat `config.yaml` as the primary source, with `PODIMO_`-prefixed env vars and `.env` (via godotenv) as overrides. Defines `Config` struct with `mapstructure` tags. Strict validation on all typed fields (invalid booleans/durations fail hard at startup).
+| `config.go` | **Hybrid config loader:** uses `knadh/koanf` with a flat `config.yaml` as the primary source, with `PODIMO_`-prefixed env vars and `.env` (via godotenv) as overrides. Defines `Config` struct with `koanf` tags. Strict validation on all typed fields (invalid booleans/durations fail hard at startup).
 | `podimo/client.go` | `PodimoClient` struct. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. Wraps search and subscription endpoints. Maps GraphQL auth failures to `AuthenticationError`. |
 | `podimo/graphql.go` | `GraphQLClient` — wraps `http.Post` with JSON encoding/decoding, structured `GQLError` extraction, and a 10 MB response size limit. |
 | `podimo/rss.go` | `PodcastsToRss` — builds RSS XML from episode data, parallelizes HEAD requests per chunk with context cancellation checks. Retries failed HEAD requests up to 3 times. Handles audio URL extraction and content-type detection. |
@@ -334,7 +334,7 @@ See `go.mod`. Key runtime deps:
 - `github.com/go-chi/chi/v5` (~=5.1.0) — HTTP router and middleware
 - `github.com/eduncan911/podcast` (~=1.4.2) — RSS/Atom generation
 - `github.com/joho/godotenv` (~=1.5.1) — `.env` file loading
-- `github.com/spf13/viper` (~=1.21.0) — YAML/TOML/JSON/env configuration with precedence and defaults
+- `github.com/knadh/koanf/v2` (~=2.3.5) — YAML/env configuration with precedence and defaults
 
 Go standard library fills the rest: `net/http`, `html/template`, `embed`, `log/slog`, `sync`, `context`, etc.
 
