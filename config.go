@@ -68,6 +68,16 @@ func LoadConfig(configFile string) (*Config, error) {
 	v.SetDefault("public_feeds", false)
 	v.SetDefault("trusted_proxy_header", "")
 
+	// BindEnv for keys that have no SetDefault and may appear only via env vars.
+	// Without this, Viper's Unmarshal skips keys it doesn't "know" — even though
+	// AutomaticEnv makes v.GetString("email") work, Unmarshal leaves the struct
+	// field empty. This bit local_credentials mode (email/password were "").
+	for _, key := range []string{"email", "password", "http_proxy", "zenrows_api", "scraper_api"} {
+		if err := v.BindEnv(key); err != nil {
+			return nil, fmt.Errorf("bind env %q: %w", key, err)
+		}
+	}
+
 	if configFile != "" {
 		v.SetConfigFile(configFile)
 		if err := v.ReadInConfig(); err != nil {

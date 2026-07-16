@@ -588,6 +588,14 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 }
 
 func TestLoadConfig_WithYAMLFile(t *testing.T) {
+	// Run from a temp dir so godotenv.Load(".env") inside LoadConfig finds no
+	// .env file, and blank any PODIMO_* vars leaked into the process env by
+	// earlier tests/godotenv so Viper (which treats empty env as unset) falls
+	// back to the YAML file values instead of the repo .env.
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
+		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
+	}
 	content := `hostname: "podimo.example.com"
 bind_host: "0.0.0.0:3000"
 protocol: "https"
@@ -640,6 +648,35 @@ public_feeds: true
 	}
 	if !cfg.PublicFeeds {
 		t.Error("public_feeds: expected true")
+	}
+}
+
+// TestLoadConfig_EnvOnlyCredentials guards against the Viper AutomaticEnv +
+// Unmarshal gap: keys with no SetDefault and no config-file entry were left
+// empty by Unmarshal even when the matching PODIMO_ env var was set. This
+// caused local_credentials mode to see empty email/password and report
+// "Authentication required" with no logged reason.
+func TestLoadConfig_EnvOnlyCredentials(t *testing.T) {
+	t.Setenv("PODIMO_EMAIL", "envonly@example.com")
+	t.Setenv("PODIMO_PASSWORD", "envsecret")
+	t.Setenv("PODIMO_LOCAL_CREDENTIALS", "true")
+	t.Setenv("PODIMO_HTTP_PROXY", "http://proxy:8080")
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig(\"\"): %v", err)
+	}
+	if !cfg.LocalCredentials {
+		t.Error("local_credentials: expected true")
+	}
+	if cfg.Email != "envonly@example.com" {
+		t.Errorf("email: got %q, want %q", cfg.Email, "envonly@example.com")
+	}
+	if cfg.Password != "envsecret" {
+		t.Errorf("password: got %q, want %q", cfg.Password, "envsecret")
+	}
+	if cfg.HTTPProxy != "http://proxy:8080" {
+		t.Errorf("http_proxy: got %q, want %q", cfg.HTTPProxy, "http://proxy:8080")
 	}
 }
 

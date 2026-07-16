@@ -323,6 +323,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
+		a.logger.Error("Search auth failed", "error", err)
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
@@ -360,6 +361,7 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
+		a.logger.Error("Subscriptions auth failed", "error", err)
 		a.renderPartial(w, "subscriptions.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
@@ -468,6 +470,7 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 
 	client, err := a.checkAuth(r.Context(), username, password, region, locale)
 	if err != nil {
+		a.logger.Error("Feed auth failed", "error", err)
 		authenticate(w)
 		return
 	}
