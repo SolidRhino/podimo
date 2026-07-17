@@ -1,0 +1,18 @@
+{{ if .Error }}
+<span class="search-err">Error: {{ .Error }}</span>
+{{ else if not .Results }}
+<em class="search-msg">No subscriptions found.</em>
+{{ else }}
+<ul>
+  {{ range .Results }}
+  <li onclick="selectPodcast('{{ .ID }}')">
+    {{ if .CoverImageURL }}
+    <img src="{{ .CoverImageURL }}" width="48" height="48">
+    {{ end }}
+    <div>
+      <strong>{{ .Title }}</strong>
+    </div>
+  </li>
+  {{ end }}
+</ul>
+{{ end }}

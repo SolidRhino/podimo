@@ -1,7 +1,7 @@
 # Agent Context: Podimo to RSS
 
 > This file provides context for AI assistants working on the codebase.
-> Last updated: 2026-05-20
+> Last updated: 2026-05-26
 
 ## Language Policy
 
@@ -18,72 +18,90 @@ Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only wher
 
 ## Project Overview
 
-**Podimo to RSS** is a self-hosted Python web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
+**Podimo to RSS** is a self-hosted Go web service that reverse-engineers the Podimo mobile GraphQL API to expose exclusive/paywalled podcasts as standard RSS feeds. Users authenticate with their Podimo credentials, and the tool generates RSS XML that any podcast app (Apple Podcasts, Overcast, Pocket Casts, etc.) can subscribe to.
 
-- **Language:** Python 3.12+ (fully typed, `mypy` passing)
-- **Framework:** Quart (async Flask-like) + Hypercorn
+- **Language:** Go 1.26+
+- **Framework:** Go standard library `net/http` + `chi` router
 - **API:** Podimo GraphQL (`https://podimo.com/graphql`)
 - **Auth:** HTTP Basic Auth (credentials embedded in URL) or local credentials mode
-- **Tests:** pytest + pytest-asyncio (70 tests across 4 modules)
-- **CI:** GitHub Actions — test matrix on Python 3.10/3.11/3.12, Docker image publishing to GHCR
+- **Tests:** Go testing (`go test`)
+- **CI:** GitHub Actions - test matrix, Docker image publishing to GHCR
 - **License:** EUPL 1.2
 
 ## Quick Architecture
 
 ```
-main.py              → Quart web server, routes, RSS feed generation
+main.go          → HTTP server, routes, handlers, middleware, RSS feed serving
+config.go        → Environment variables, constants, block list, Config struct
 podimo/
-  client.py          → GraphQL API client (login, episode fetching)
-  config.py          → Environment variables, constants, block list
-  cache.py           → diskcache-backed token, podcast, and HEAD caches
-  utils.py           → Header generation, async wrapping, helpers
-tests/               → pytest suite (client, RSS, web routes, utils)
-mypy.ini             → mypy configuration (ignores missing third-party stubs)
+  client.go      → GraphQL API client (login, episode fetching, search, subscriptions)
+  graphql.go     → GraphQL HTTP client wrapper
+  rss.go         → RSS feed generation via `eduncan911/podcast`
+  cache.go       → JSON-file-backed TTL cache (token, podcast, HEAD caches)
+  boundedmap.go  → Generic in-memory LRU cache with TTL eviction
+static/          → Embedded static files (CSS stylesheet)
+templates/       → HTML templates (index.html, feed_location.html, partials/*.html), embedded via `embed.FS`
+main_test.go     → Handler tests (health, index, feed, search, subscriptions, rate limiting)
+  podimo/client_test.go → PodimoClient constructor, login, token cache
+  podimo/graphql_test.go → GraphQL client response handling
+  podimo/rss_test.go    → RSS generation, audio URL extraction, HEAD caching
+  podimo/cache_test.go  → FileCache get/set/expiration
+  podimo/boundedmap_test.go → BoundedMap LRU/TTL behavior
 ```
 
 ## Key Files & Responsibilities
 
 | File | What it does |
 |------|-------------|
-| `main.py` | Entry point. Defines routes (`/`, `/health`, `/feed/<id>.xml`, `/feed/<u>/<p>/<id>.xml`). Generates RSS XML via `feedgen`. |
-| `podimo/client.py` | Podimo GraphQL client. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. |
-| `podimo/config.py` | Loads `.env` + env vars. Defines regions, locales, cache TTLs, feature flags. |
-| `podimo/cache.py` | Three diskcache instances: `TOKENS` (auth tokens), `podcast_cache` (episode lists), `head_cache` (audio file metadata). |
-| `podimo/utils.py` | `generateHeaders()` (spoofs Android app), `async_wrap()` (sync→async bridge), `token_key()` (SHA256 cache key), `is_correct_email_address()`. |
-| `templates/index.html` | Form: email, password, podcast ID, region, locale. Extracts UUID from full Podimo URLs via JS regex. Shows warning when credentials are embedded in URL. |
+| `main.go` | Entry point. Defines routes, middleware (logging, rate limiting), server timeouts, and credential redaction. Generates RSS XML via `podimo.PodcastsToRss`. |
+| `config.go` | **Hybrid config loader:** uses `knadh/koanf` with a flat `config.yaml` as the primary source, with `PODIMO_`-prefixed env vars and `.env` (via godotenv) as overrides. Defines `Config` struct with `koanf` tags. Strict validation on all typed fields (invalid booleans/durations fail hard at startup).
+| `podimo/client.go` | `PodimoClient` struct. Handles pre-register token → onboarding ID → login token flow. Fetches paginated episodes. Wraps search and subscription endpoints. Maps GraphQL auth failures to `AuthenticationError`. |
+| `podimo/graphql.go` | `GraphQLClient` — wraps `http.Post` with JSON encoding/decoding, structured `GQLError` extraction, and a 10 MB response size limit. |
+| `podimo/rss.go` | `PodcastsToRss` — builds RSS XML from episode data, parallelizes HEAD requests per chunk with context cancellation checks. Retries failed HEAD requests up to 3 times. Handles audio URL extraction and content-type detection. |
+| `podimo/cache.go` | `FileCache` — per-key JSON files with `expires_at` timestamp. Per-key mutexes stored in a `BoundedMap`. Three instances per app: tokens, podcast, head caches. |
+| `templates/index.html` | Form: email, password, podcast ID, region, locale. Uses HTMX and Alpine.js for search, subscriptions, and copy-to-clipboard. Extracts UUID from full Podimo URLs via JS regex. |
 | `templates/feed_location.html` | Shows generated feed URL with copy button and QR code. |
-| `tests/conftest.py` | Shared pytest fixtures (mock podcast data with/without episodes, reset rate limiter). |
-| `tests/test_client.py` | Tests for `PodimoClient` constructor, `getPodcastName`, `token_key`. |
-| `tests/test_rss.py` | Tests for `podcastsToRss`, `extract_audio_url`, content-type logic, `urlHeadInfo`. |
-| `tests/test_web.py` | Tests for Quart routes (`/`, `/health`, 404, 400 for invalid UUID), UUID regex, rate limiting. |
-| `tests/test_utils.py` | Tests for `is_correct_email_address`, `generateHeaders`, `chunks`, `async_wrap`. |
+| `templates/partials/*.html` | HTMX partials for search results, subscriptions, and feed result. |
+| `static/style.css` | External stylesheet with dark mode support. |
+| `config.example.yaml` | Reference configuration file. Documented flat-YAML schema with all options and defaults. Copy to `config.yaml` to customize. |
+| `podimo/boundedmap.go` | `BoundedMap` - generic in-memory LRU cache with optional TTL and background cleanup. Used for per-user `http.Client` pools and rate-limiter IP tracking. |
+| `Dockerfile` | Multi-stage build: `golang:1.26-alpine` builder → `scratch` runtime (zero attack surface: no shell, no package manager, no libs). Bundles CA certs for outbound HTTPS, runs as nonroot UID 65532, and declares `HEALTHCHECK CMD ["/podimo-rss", "healthcheck"]` using the built-in subcommand (no curl/shell needed). |
+| `docker-compose.yml` | Compose stack with `podimo-cache` named volume, `PODIMO_BIND_HOST=0.0.0.0:12104`, and a `healthcheck` block mirroring the Dockerfile `HEALTHCHECK`. |
 
 ## Authentication Flow (Podimo GraphQL)
 
-The client must make **3 sequential GraphQL requests** to authenticate:
+The client makes **3 sequential GraphQL requests** to authenticate:
 
 1. **`AuthorizationPreregisterUser`** → get `preauth_token`
 2. **`OnboardingQuery`** → get `prereg_id` (onboarding flow ID)
 3. **`AuthorizationAuthorize`** → get `token` (final auth token, valid ~5 days)
 
-All subsequent requests (episode fetching) use the final token in the `authorization` header.
+All subsequent requests (episode fetching, search, subscriptions) use the final token in the `authorization` header.
 
 ## Caching Strategy
 
 | Cache | Key | TTL | Purpose |
 |-------|-----|-----|---------|
-| `TOKENS` | `SHA256(username~password)` | 5 days | Avoid re-logging in for every feed refresh |
+| `token_cache` | `SHA256(username~password)` | 5 days | Avoid re-logging in for every feed refresh |
 | `podcast_cache` | `podcast_id` | 6 hours | Avoid re-fetching episode lists on every podcast app poll |
 | `head_cache` | `episode_id` | 7 days | Avoid HEAD requests to audio URLs (content-length, content-type) |
-| `cookie_jars` | `user_key` | in-memory | Maintain session cookies between requests |
+| `clients` | `user_key` | 5 days (token cache TTL) | Maintain `http.Client` with `cookiejar` per user; bounded to 100 entries with LRU eviction |
+| `rate_limiter_ips` | `IP address` | 10 seconds | Track requests per IP for rate limiting; bounded to 10 000 entries with LRU eviction |
 
 ## Important Code Patterns
 
-### Sync→Async Bridge
-`cloudscraper` and `ZenRowsClient` are synchronous. They are wrapped via `async_wrap()` (uses `loop.run_in_executor`). `ZenRowsClient` is a **lazy singleton** — created once at first use, not per request.
+### HTTP Client per User
+Each authenticated user gets a dedicated `http.Client` stored in `App.clients` with its own `cookiejar`. If `ZenRowsAPI` or `HTTP_PROXY` is configured, the transport's `Proxy` is set accordingly. ScraperAPI is handled at the GraphQL endpoint URL level.
 
-```python
-response = await async_wrap(scraper.post)(url, headers=..., json=..., timeout=...)
+```go
+func (a *App) getHTTPClient(key string) *http.Client
+```
+
+### Credential Redaction in Logs
+URLs containing embedded credentials are redacted before logging to avoid leaking passwords in log output:
+
+```go
+func redactURLString(raw string) string
 ```
 
 ### URL-Based Credential Embedding
@@ -93,188 +111,296 @@ https://email%40domain.com:password@host/feed/<podcast_id>.xml?region=nl&locale=
 ```
 Region and locale are comma-appended to the username in the Basic Auth string.
 
-### Chunked Episode Processing
-Episodes are added to the RSS feed in chunks of 5 with `asyncio.gather` to parallelize HEAD requests:
-```python
-for chunk in chunks(episodes, 5):
-    await asyncio.gather(*[addFeedEntry(fg, ep, session, locale) for ep in chunk])
+### Chunked Episode Processing with Context Cancellation
+Episodes are added to the RSS feed in chunks of 5 with `sync.WaitGroup` + goroutines to parallelize HEAD requests. The loop checks `ctx.Err()` between chunks and inside each goroutine to allow fast cancellation:
+
+```go
+for _, chunk := range chunks(episodes, 5) {
+    if ctx.Err() != nil {
+        return nil, ctx.Err()
+    }
+    var wg sync.WaitGroup
+    for i, ep := range chunk {
+        wg.Add(1)
+        go func(idx int, raw interface{}) {
+            defer wg.Done()
+            if ctx.Err() != nil {
+                return
+            }
+            // ... build item
+        }(i, ep)
+    }
+    wg.Wait()
+    // add valid items to feed
+}
+```
+
+### HEAD Request Retry
+Each episode's HEAD request (for content-length and content-type) retries up to 3 times with a 1-second backoff before falling back to safe defaults (`audio/mpeg`, length 0):
+
+```go
+retries := 3
+for attempt := 0; attempt < retries; attempt++ {
+    resp, err := client.Do(req)
+    if err != nil {
+        if attempt < retries-1 {
+            select {
+            case <-ctx.Done():
+                return "0", "audio/mpeg", ctx.Err()
+            case <-time.After(1 * time.Second):
+            }
+            continue
+        }
+        return "0", "audio/mpeg", err
+    }
+    // ... cache and return headers
+}
 ```
 
 ### Rate Limiting
-Feed endpoints (`/feed/...`) are protected by a per-IP rate limiter (8 requests per 10-second window):
-```python
-@app.route("/feed/<...")
-@limit_request()
-async def serve_feed(...):
+Feed endpoints (`/feed/...`, `/search`, `/subscriptions`) are protected by a per-IP rate limiter (8 requests per 10-second window):
+
+```go
+r.With(a.rateLimitMiddleware).Get("/feed/{podcast_id}.xml", a.handleFeed)
 ```
 
-### Custom Exceptions
-The client raises structured exceptions instead of generic `RuntimeError`:
-- `PodimoError` — base exception
+### Custom Exceptions (Go Error Types)
+The client uses structured error types that satisfy `error`:
+
+- `PodimoError` — base error type (`Error()` string method)
 - `PodcastNotFoundError` — podcast ID doesn't exist
 - `AuthenticationError` — invalid credentials
 
-### Request Logging
-Requests are logged at both start and completion with timing:
-- `@app.before_request` — logs incoming request (method, URL, IP, User-Agent), stores start time
-- `@app.after_request` — logs response status code and request duration in seconds
+All have `Error()` methods and can be type-asserted for specific handling:
 
-```python
-# Example log output (DEBUG mode):
-# --> GET /feed/12345-...xml from 192.168.1.1 UA=Overcast/1.0
-# <-- GET /feed/12345-...xml 200 (0.423s)
+```go
+if _, ok := err.(*podimo.PodcastNotFoundError); ok {
+    http.Error(w, "Podcast not found", http.StatusNotFound)
+}
+```
+
+### Server Timeouts
+The HTTP server is configured with explicit timeouts to harden against slowloris and resource exhaustion:
+
+```go
+server := &http.Server{
+    Addr:              cfg.BindHost,
+    Handler:           router,
+    ReadTimeout:       30 * time.Second,
+    WriteTimeout:      60 * time.Second,
+    IdleTimeout:       120 * time.Second,
+    ReadHeaderTimeout: 10 * time.Second,
+    MaxHeaderBytes:    1 << 20, // 1MB
+}
+```
+
+### Request Logging
+Requests are logged at both start and completion with timing via a `chi` middleware. URLs are redacted to scrub embedded credentials:
+
+```go
+func (a *App) loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        a.logger.Debug("Request started", "url", redactURLString(r.URL.String()), ...)
+        next.ServeHTTP(w, r)
+        a.logger.Debug("Request completed", "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
+    })
+}
 ```
 
 ### Health Check Endpoint
-A lightweight `/health` endpoint returns `{"status": "ok", "service": "podimo-rss"}`. This is used by Docker `HEALTHCHECK` and orchestration tools (Kubernetes, Docker Compose, etc.). The endpoint has no external dependencies and should always return 200.
+A lightweight `/health` endpoint returns `{"status":"ok","service":"podimo-rss"}`. This is used by Docker `HEALTHCHECK` and orchestration tools (Kubernetes, Docker Compose, etc.). The endpoint has no external dependencies and should always return 200.
 
-```python
-@app.route("/health")
-async def health():
-    return jsonify({"status": "ok", "service": "podimo-rss"})
+The `scratch` runtime image has no shell or `curl`, so the Dockerfile `HEALTHCHECK` invokes a built-in `healthcheck` subcommand (`/podimo-rss healthcheck`) that probes the same `/health` endpoint via loopback. It reads `PODIMO_BIND_HOST` from the environment (defaulting to `127.0.0.1:12104`, normalizing wildcard bind hosts `0.0.0.0`, `::`, and empty host to `127.0.0.1`) and exits 0 on HTTP 200, 1 otherwise. It is side-effect-free (no config load, no cache I/O).
+
+```go
+func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
+}
 ```
 
 ## Common Tasks
 
 ### Adding a new region/locale
-Edit `podimo/config.py`:
-- Add to `LOCALES` list (e.g., `'fr-FR'`)
-- Add to `REGIONS` tuple (e.g., `('fr', 'France')`)
+Edit `config.go`:
+- Add to `Locales` slice (e.g., `"fr-FR"`)
+- Add to `Regions` slice (e.g., `Region{Code: "fr", Name: "France"}`)
 
 ### Changing cache TTLs
-Set environment variables in `.env` or shell:
-- `TOKEN_CACHE_TIME` (default: 432000 = 5 days)
-- `PODCAST_CACHE_TIME` (default: 21600 = 6 hours)
-- `HEAD_CACHE_TIME` (default: 604800 = 7 days)
+Set in `config.yaml` (preferred) or via env var:
+```yaml
+# config.yaml
+token_cache_time: "432000s"   # 5 days (default)
+podcast_cache_time: "21600s"  # 6 hours (default)
+head_cache_time: "604800s"    # 7 days (default)
+```
+Or via environment variable:
+```bash
+PODIMO_TOKEN_CACHE_TIME=432000
+PODIMO_PODCAST_CACHE_TIME=21600
+PODIMO_HEAD_CACHE_TIME=604800
+```
 
 ### Enabling/disabling features
-- `LOCAL_CREDENTIALS=true` — single-user mode, credentials stored server-side
-- `PUBLIC_FEEDS=true` — removes `<itunes:block>` from RSS
-- `ENABLE_VIDEO=true` — adds HLS video URLs to episode descriptions
-- `DEBUG=true` — verbose logging
+In `config.yaml`:
+```yaml
+local_credentials: true   # single-user mode
+debug: true                 # verbose logging
+```
+Or via environment variables (prefixed with `PODIMO_`):
+- `PODIMO_LOCAL_CREDENTIALS=true` — single-user mode, credentials stored server-side
+- `PODIMO_PUBLIC_FEEDS=true` — removes `<itunes:block>` from RSS
+- `PODIMO_DEBUG=true` — verbose `slog` logging at `LevelDebug`
 
 ### Running locally
 ```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python main.py
+go mod download
+go run .
 # Visit http://localhost:12104
 ```
 
 ### Running tests
 ```bash
-pip install -r requirements.txt
-pytest -v
-mypy podimo/ main.py
+just test
+just lint
 ```
 
 ### Running in Docker
 ```bash
+just docker-build
+just docker-run
+# Or manually:
 docker build -t podimo-rss .
 docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ```
 
 ## Known Gotchas & Pitfalls
 
-✅ **FIXED** — `return ValueError(...)` instead of `raise` in `client.py`  
-✅ **FIXED** — Fragile `getPodcastName` via dict insertion order  
-✅ **FIXED** — Backwards content-type logic overwriting correct MIME types  
-✅ **FIXED** — Empty episode list producing malformed RSS  
-✅ **FIXED** — `ZenRowsClient` created per request (now a lazy singleton)  
-✅ **FIXED** — Block list using substring matching (now exact match)  
-✅ **FIXED** — No rate limiting (added per-IP limit: 8 req/10s)  
-✅ **FIXED** — CORS wildcard on all responses (removed)  
-✅ **FIXED** — Docker running as root with build deps (now multi-stage + non-root)  
-✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)  
-✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` subclasses)  
-✅ **FIXED** — Logging only at `@app.before_request` (now logs both start and end with duration + status code)  
+✅ **FIXED** - `return ValueError(...)` instead of `raise` in `client.py` (Python era)
+✅ **FIXED** - Fragile `getPodcastName` via dict insertion order
+✅ **FIXED** - Backwards content-type logic overwriting correct MIME types
+✅ **FIXED** - Empty episode list producing malformed RSS
+✅ **FIXED** - Cloudscraper created per request (now native `http.Client` reused per user)
+✅ **FIXED** - Block list using substring matching (now exact match via `map[string]struct{}`)
+✅ **FIXED** - No rate limiting (added per-IP limit: 8 req/10s)
+✅ **FIXED** - CORS wildcard on all responses (removed)
+✅ **FIXED** — Docker running as root with build deps (now multi-stage `golang:1.26-alpine` builder → `scratch` runtime with CA certs, nonroot UID 65532, and built-in `healthcheck` subcommand for `HEALTHCHECK`)
+✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)
+✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` types)
+✅ **FIXED** — Logging only at request start (now logs both start and end with duration + status code)
 ✅ **FIXED** — No `/health` endpoint for Docker orchestration (added lightweight JSON health probe)
+✅ **FIXED** — Python/discscraper/async complexity (rewritten to Go with native `net/http`)
+✅ **FIXED** — No server timeouts (added `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, `ReadHeaderTimeout`, `MaxHeaderBytes`)
+✅ **FIXED** — Credentials leaked in logs (added `redactURLString` before logging request URLs)
+✅ **FIXED** — Unbounded in-memory caches (replaced with `BoundedMap` LRU+TTL for per-user clients and rate-limiter IPs)
+✅ **FIXED** — Unstructured GraphQL errors and unbounded response sizes (added `GQLError` type + 10 MB response limit)
+✅ **FIXED** — RSS generation ignoring context cancellation (now checks `ctx.Err()` between chunks and per-goroutine)
+✅ **FIXED** — No HEAD retry on transient audio URL failures (now retries up to 3× with 1 s backoff)
 
 **Remaining:**
-- **`split_username_region_locale` silent fallback** — If the username doesn't contain exactly 2 commas, it silently defaults to Dutch (`nl`, `nl-NL`). This is intentional for podcast app compatibility but can surprise non-Dutch users. **Do not change without a migration plan** — existing feed URLs would break.
+- **`split_username_region_locale` silent fallback** - If the username doesn't contain exactly 2 commas, it silently defaults to Dutch (`nl`, `nl-NL`). This is intentional for podcast app compatibility but can surprise non-Dutch users. **Do not change without a migration plan** - existing feed URLs would break.
 
 ## Podcast ID Discovery
 
 Users no longer need to manually extract podcast IDs from Podimo URLs. The web UI provides two discovery mechanisms:
 
-1. **Search by name** — The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
+1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
-2. **Your subscriptions** — Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query).
+2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query).
 
-The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) — the UUID is extracted via client-side JavaScript regex.
+The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) - the UUID is extracted via client-side JavaScript regex.
 
 ## Testing
 
-There is now a **pytest suite** with 4 test modules:
+There is now a **Go test suite** with 6 test files:
 
 | File | Coverage |
 |------|----------|
-| `tests/test_client.py` | `PodimoClient` constructor validation, `getPodcastName`, `token_key` |
-| `tests/test_rss.py` | `podcastsToRss` with/without episodes, `extract_audio_url`, `urlHeadInfo`, content-type logic |
-| `tests/test_web.py` | Quart routes (`/` 200, `/health` 200, `/search` 200, `/subscriptions` 200, 404, 400 for invalid UUID), UUID regex, rate limiter |
-| `tests/test_utils.py` | `is_correct_email_address`, `generateHeaders`, `chunks`, `async_wrap` |
+| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/search` 200, `/subscriptions` 200, 404, 400 for invalid UUID, rate limiter behavior |
+| `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling |
+| `podimo/graphql_test.go` | `GraphQLClient.Query` status-code handling, structured `GQLError` extraction, 10 MB limit |
+| `podimo/rss_test.go` | `PodcastsToRss` XML output, `ExtractAudioURL`, `URLHeadInfo`, content-type logic, `chunks` |
+| `podimo/cache_test.go` | `FileCache` get/set, TTL expiration, concurrent access |
+| `podimo/boundedmap_test.go` | `BoundedMap` get/set, LRU eviction, TTL expiration, concurrent access |
 
 Run with:
-```bash
-pytest -v
-pytest --cov=podimo --cov=main tests/  # with coverage
+just test
 ```
 
 ## Dependencies
 
-See `requirements.txt`. Key runtime deps:
-- `quart` (~=0.20.0) + `hypercorn` (~=0.17.0) — async web server
-- `feedgen` (~=0.9.0) — RSS/Atom generation
-- `aiohttp` (~=3.13.5) — async HTTP client (for HEAD requests)
-- `cloudscraper` (~=1.2.71) — bypasses Cloudflare bot detection (sync)
-- `diskcache` (~=5.6.3) — disk-backed key-value cache
-- `zenrows` (~=1.3.2) + `scraperapi` — optional proxy services
+See `go.mod`. Key runtime deps:
+- `github.com/go-chi/chi/v5` (~=5.1.0) — HTTP router and middleware
+- `github.com/eduncan911/podcast` (~=1.4.2) — RSS/Atom generation
+- `github.com/joho/godotenv` (~=1.5.1) — `.env` file loading
+- `github.com/knadh/koanf/v2` (~=2.3.5) — YAML/env configuration with precedence and defaults
 
-Dev/test deps:
-- `pytest` (~=8.0.0) + `pytest-asyncio` (~=0.23.0) + `pytest-cov` (~=6.0.0)
-- `mypy` (~=1.8.0)
+Go standard library fills the rest: `net/http`, `html/template`, `embed`, `log/slog`, `sync`, `context`, etc.
 
-**Security note:** `werkzeug` is pinned to `~=3.1.8` to include the GHSA-q34m-jh98-gwm2 fix (path traversal vulnerability in earlier 3.0.x releases). Do not downgrade.
+## Configuration
 
-## Environment Reference
+### `config.yaml` (preferred)
+Place a `config.yaml` in the working directory or at `/etc/podimo-rss/config.yaml`. All fields are optional; defaults are applied when absent. See `config.example.yaml` for a full reference.
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PODIMO_HOSTNAME` | `localhost:12104` | Hostname shown in generated URLs |
-| `PODIMO_BIND_HOST` | `127.0.0.1:12104` | IP:port the server listens on |
-| `PODIMO_PROTOCOL` | `http` | Protocol for generated URLs |
-| `LOCAL_CREDENTIALS` | `false` | Store creds server-side vs embed in URL |
-| `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials |
-| `HTTP_PROXY` | — | Generic proxy for outbound requests |
-| `ZENROWS_API` / `SCRAPER_API` | — | Anti-bot proxy API keys |
-| `STORE_TOKENS_ON_DISK` | `true` | Persist auth tokens to disk |
-| `CACHE_DIR` | `./cache` | Where diskcache stores data |
-| `BLOCK_LIST_FILE` | `./.block-list` | File with blocked podcast IDs |
+Example:
+```yaml
+hostname: "myserver.example.com"
+bind_host: "0.0.0.0:12104"
+debug: true
+```
+
+### Env vars (override)
+All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` files are still supported via godotenv pre-load.
+
+### CLI flag (custom file path)
+```bash
+./podimo-rss --config=/etc/podimo-rss/config.yaml
+```
+
+### Precedence (highest first)
+1. `--config /path/to/config.yaml` (explicit CLI flag)
+2. Environment variables (`PODIMO_DEBUG=true`)
+3. `config.yaml` in working dir or `/etc/podimo-rss/`
+4. `.env` file (pre-loaded into env vars)
+5. Hardcoded defaults
+
+| Variable / YAML key | Default | Purpose |
+|---------------------|---------|---------|
+| `PODIMO_HOSTNAME` / `hostname` | `localhost:12104` | Hostname shown in generated URLs |
+| `PODIMO_BIND_HOST` / `bind_host` | `127.0.0.1:12104` | IP:port the server listens on |
+| `PODIMO_PROTOCOL` / `protocol` | `http` | Protocol for generated URLs |
+| `PODIMO_LOCAL_CREDENTIALS` / `local_credentials` | `false` | Store creds server-side vs embed in URL |
+| `PODIMO_EMAIL` / `email` | — | Server-side credentials |
+| `PODIMO_PASSWORD` / `password` | — | Server-side credentials |
+| `PODIMO_HTTP_PROXY` / `http_proxy` | — | Generic proxy for outbound requests |
+| `PODIMO_ZENROWS_API` / `zenrows_api` | — | Anti-bot proxy API key |
+| `PODIMO_SCRAPER_API` / `scraper_api` | — | Anti-bot proxy API key |
+| `PODIMO_STORE_TOKENS_ON_DISK` / `store_tokens_on_disk` | `true` | Persist auth tokens to disk |
+| `PODIMO_CACHE_DIR` / `cache_dir` | `./cache` | Where `FileCache` stores JSON files |
+| `PODIMO_BLOCK_LIST_FILE` / `block_list_file` | `./.block-list` | File with blocked podcast IDs |
+| `PODIMO_TOKEN_CACHE_TIME` / `token_cache_time` | `432000s` | Auth token cache TTL |
+| `PODIMO_PODCAST_CACHE_TIME` / `podcast_cache_time` | `21600s` | Episode list cache TTL |
+| `PODIMO_HEAD_CACHE_TIME` / `head_cache_time` | `604800s` | HEAD response cache TTL |
+| `PODIMO_PUBLIC_FEEDS` / `public_feeds` | `false` | Remove `<itunes:block>` from RSS |
+| `PODIMO_DEBUG` / `debug` | `false` | Verbose `slog` logging
 
 ## Security Notes for Agents
 
 - **Never commit real credentials** to `.env` or the repo. `.env` is in `.gitignore`.
-- **Credentials in URLs** are unavoidable for podcast app compatibility, but warn users. The UI now displays a prominent notice when `need_credentials=true`.
+- **Credentials in URLs** are unavoidable for podcast app compatibility, but warn users. The UI displays a prominent notice when `NeedCredentials=true`.
 - **Use `LOCAL_CREDENTIALS=true`** for personal instances to avoid embedding passwords in URLs.
-- **Always run behind HTTPS** (reverse proxy) in production — Basic Auth is cleartext otherwise.
-- **Auth tokens are sensitive** — they grant full Podimo account access. `STORE_TOKENS_ON_DISK` should be `false` on shared/multi-user instances.
-- **Rate limiting is active** — 8 requests per 10-second window per IP on feed endpoints.
+- **Always run behind HTTPS** (reverse proxy) in production - Basic Auth is cleartext otherwise.
+- **Auth tokens are sensitive** - they grant full Podimo account access. `STORE_TOKENS_ON_DISK` should be `false` on shared/multi-user instances.
+- **Rate limiting is active** - 8 requests per 10-second window per IP on feed/search/subscription endpoints.
 
 ## Refactoring Opportunities
 
 If modifying this codebase, consider:
-- ~~Replacing `cloudscraper` + `async_wrap` with an async-native anti-bot client~~ (deferred — working well enough)
-- ~~Adding `pytest` + `pytest-asyncio` tests~~ ✅ Done
-- ~~Adding rate limiting~~ ✅ Done (lightweight in-memory)
-- ~~Cleaning the Dockerfile~~ ✅ Done (multi-stage + non-root)
-- ~~Replacing substring-based block list~~ ✅ Done (exact match)
-- ~~Adding health check endpoint~~ ✅ Done (`/health` JSON endpoint)
-- ~~Adding podcast search + subscriptions~~ ✅ Done (`/search`, `/subscriptions`)
 - Adding more granular rate limits per-user (currently IP-based only)
-- Moving from `diskcache` to `redis` or similar for multi-instance deployments
-- ~~Adding `workflow_dispatch` to CI~~ ✅ Done (manual test runs)
-- Configuring `mypy --strict` (currently using basic config in `mypy.ini`)
+- Moving from `FileCache` to `redis` or similar for multi-instance deployments
+- Configuring stricter `go vet` / `staticcheck` / `golangci-lint` rules
+- Adding OpenAPI/Swagger docs for the JSON endpoints (`/search`, `/subscriptions`)
 
 ## Developer Workflow
 

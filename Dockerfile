@@ -1,43 +1,38 @@
-# Stage 1: Build dependencies
-FROM python:3.12-alpine AS builder
+# Stage 1: Build
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /src
 
-# Build tools needed to compile lxml (feedgen dep) and other native modules
-RUN apk add --no-cache libxml2-dev libxslt-dev gcc libc-dev musl-dev
+RUN apk add --no-cache git
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Stage 2: Runtime image
-FROM python:3.12-alpine AS runtime
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o podimo-rss .
 
-WORKDIR /src
+# Pre-create cache dir with nonroot ownership so named-volume init preserves it
+RUN mkdir -p /tmp/podimo-rss-cache && chown 65532:65532 /tmp/podimo-rss-cache && touch /tmp/podimo-rss-cache/.keep
 
-# Install curl for HEALTHCHECK and libxml2/libxslt for lxml runtime
-RUN apk add --no-cache curl libxml2 libxslt
+# Stage 2: Runtime (scratch — zero attack surface: no shell, no package manager, no libs)
+FROM scratch
 
-# Copy installed packages from builder
-COPY --from=builder /root/.local /home/podimo/.local
+# CA certificates for outbound HTTPS (Podimo GraphQL API + audio URL HEAD requests)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-# Copy application code
-COPY . /src
+# Static binary
+COPY --from=builder /src/podimo-rss /podimo-rss
 
-# Create non-root user
-RUN addgroup -S podimo && adduser -S podimo -G podimo \
-    && mkdir -p /src/cache \
-    && chown -R podimo:podimo /src
+# Cache directory (correct ownership for named-volume initialization)
+COPY --from=builder --chown=65532:65532 /tmp/podimo-rss-cache /tmp/podimo-rss-cache
 
-USER podimo
+ENV PODIMO_CACHE_DIR=/tmp/podimo-rss-cache
 
-# Ensure python can find user-installed packages
-ENV PATH=/home/podimo/.local/bin:$PATH \
-    PYTHONPATH=/home/podimo/.local/lib/python3.12/site-packages \
-    PYTHONUNBUFFERED=1
+USER 65532:65532
 
 EXPOSE 12104
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:12104/health || exit 1
+  CMD ["/podimo-rss", "healthcheck"]
 
-ENTRYPOINT ["python3", "main.py"]
+ENTRYPOINT ["/podimo-rss"]

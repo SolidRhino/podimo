@@ -1,14 +1,23 @@
-{% extends "base.html" %}
-
-{% block body %}
-<h1>Podimo-to-RSS converter</h1>
-This program converts shows on Podimo to an RSS feed that can be used with
-any normal podcast player.
-
-<details>
-  <summary>Using Apple/Facebook/Google to log in to Podimo?</summary>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Podimo-to-RSS converter</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="/static/fonts.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
+</head>
+<body>
+  <a href="#main-form" class="skip-link">Skip to form</a>
+  <h1>Podimo-to-RSS converter</h1>
+  <p>This program converts shows on Podimo to an RSS feed that can be used with any normal podcast player.</p>
+  <details>
+    <summary>Using Apple/Facebook/Google to log in to Podimo?</summary>
+    <p><strong>Try the following steps:</strong></p>
     <ol>
-      <u>Try the following steps:</u>
       <li>Login at Podimo like you normally would</li>
       <li>Find the email address associated with your account. For Apple, this looks something like <em>abcdefg@privaterelay.appleid.com</em>. You should be able to find them somewhere on the settings page.</li>
       <li>Logout of Podimo.</li>
@@ -17,143 +26,140 @@ any normal podcast player.
       <li>You should now be able to login to Podimo with the email address from step 2 and the password you just created. You don't have to use the Sign in with Apple/Facebook/Google buttons anymore.</li>
       <li>Verify that you can login to Podimo with your new credentials. If you can, then <em>you are able to use this site!</em></li>
     </ol>
-</details>
+  </details>
 
-{% if error %}
-<u><h2>Error: {{ error }}</h2></u>
-{% endif %}
+  {{ if .Error }}
+  <h2 class="error-title">Error: {{ .Error }}</h2>
+  {{ end }}
 
-{% if need_credentials %}
-<div style="background:#f8d7da; color:#721c24; padding:1rem; margin-bottom:1rem;">
-  <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
-  (e.g. <code>https://your-email:your-password@...</code>). This URL will be saved in your podcast app,
-  browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
-  for a single-user instance instead.
-</div>
-{% endif %}
+  {{ if .NeedCredentials }}
+  <div class="banner-warning" role="alert">
+    <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
+    (e.g. <code>https://your-email:your-password@…</code>). This URL will be saved in your podcast app,
+    browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
+    for a single-user instance instead.
+  </div>
+  {{ end }}
 
-<form action="./" method="post">
-  {% if need_credentials %}
-  <label for="email">Your Podimo email address</label> <br />
-  <input type="email" required placeholder="Podimo email address" name="email" id="email"><br />
+  <form action="./" method="post" id="main-form">
+    {{ if .NeedCredentials }}
+    <div class="form-section">
+      <div class="field-group">
+        <label for="email">Your Podimo email address</label>
+        <input type="email" required placeholder="Podimo email address" name="email" id="email" autocomplete="email">
+      </div>
 
-  <label for="password">Your Podimo password</label><br />
-  <input type="password" required placeholder="Podimo password" name="password" id="password"><br />
-  {% endif %}
+      <div class="field-group">
+        <label for="password">Your Podimo password</label>
+        <input type="password" required placeholder="Podimo password" name="password" id="password" autocomplete="current-password">
+      </div>
+    </div>
+    {{ end }}
 
-  <h2>🔍 Search for podcast</h2>
-  <label for="search_query">Search by name</label><br />
-  <input type="text" placeholder="e.g. De Staat van Stasse" name="search_query" id="search_query" minlength="2">
-  <button type="button" id="searchBtn">Search</button>
-  <div id="searchResults" style="margin-top:0.5rem;"></div>
+    <div class="form-section">
+      <h2>🔍 Search for a podcast</h2>
+      <div class="field-group">
+        <label for="search_query">Search by name</label>
+        <div class="inline-search">
+          <input type="text" placeholder="e.g. De Staat van Stasse" name="q" id="search_query" minlength="2"
+                 aria-label="Search podcasts by name"
+                 hx-get="/search" hx-target="#searchResults"
+                 hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']"
+                 hx-include="[name='region'], [name='locale']"
+                 hx-indicator=".search-loader">
+          <button type="button" id="searchBtn" class="btn-secondary"
+                  aria-label="Search for podcasts"
+                  hx-get="/search" hx-target="#searchResults"
+                  hx-include="[name='q'], [name='region'], [name='locale']" hx-trigger="click"
+                  hx-indicator=".search-loader">
+            Search
+          </button>
+        </div>
+        <div id="searchResults" class="search-results" role="region" aria-live="polite" aria-label="Search results"></div>
+        <p class="htmx-indicator search-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Searching…</p>
+      </div>
+    </div>
 
-  <hr style="margin:1.5rem 0;" />
 
-  <h2>📻 Or use your Podcast ID</h2>
-  <label for="podcast_id">Podcast ID or URL</label><br />
-  <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-...</code>) or just the ID.</small><br />
-  <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"><br />
+    <div class="form-section">
+      <h2>📻 Your Subscriptions</h2>
+      <div class="field-group">
+        <button type="button" class="btn-secondary"
+                aria-label="Load your Podimo subscriptions"
+                hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                hx-include="[name='region'], [name='locale']" hx-trigger="click"
+                hx-indicator=".subs-loader">
+          Show subscriptions
+        </button>
+        <div id="subscriptionsResults" class="search-results" role="region" aria-live="polite" aria-label="Subscriptions"></div>
+        <p class="htmx-indicator subs-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Loading subscriptions…</p>
+      </div>
+    </div>
 
-  <label for="region">Region</label><br />
-  <select name="region" id="region">
-    {% for (country_code, region) in regions %}
-    <option value="{{country_code}}">{{ region }}</option>
-    {% endfor %}
-  </select>
-  <br />
+    <div class="form-section">
+      <h2>📻 Or use your Podcast ID</h2>
+      <div class="field-group">
+        <label for="podcast_id">Podcast ID or URL</label>
+        <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-…</code>) or just the ID.</small>
+        <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}">
+      </div>
 
-  <label for="locale">Locale</label><br />
-  <select name="locale" id="locale">
-    {% for locale in locales %}
-    <option>{{ locale }}</option>
-    {% endfor %}
-  </select>
+      <div class="field-group">
+        <label for="region">Region</label>
+        <select name="region" id="region">
+          {{ range .Regions }}
+          <option value="{{ .Code }}">{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </div>
 
-  <footer>
-    Licensed under the EUPL-1.2 license - Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
-    If you find this useful, consider <a href="https://www.buymeacoffee.com/thijsr">buying the original author a coffee ☕</a>
-  </footer>
+      <div class="field-group">
+        <label for="locale">Locale</label>
+        <select name="locale" id="locale">
+          {{ range .Locales }}
+          <option>{{ . }}</option>
+          {{ end }}
+        </select>
+      </div>
+    </div>
 
-  <input type="submit" value="Create RSS URL" />
-</form>
+    <footer>
+      Licensed under the EUPL-1.2 license — Source on <a href="https://github.com/SolidRhino/podimo" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </footer>
 
-<script>
-  const input = document.getElementById('podcast_id');
-  input.addEventListener('input', function () {
-    const val = this.value.trim();
-    const match = val.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-    if (match) {
-      this.value = match[0];
-    }
-  });
+    <input type="submit" value="Create RSS URL" />
+  </form>
 
-  // Podcast search via /search endpoint
-  const searchBtn = document.getElementById('searchBtn');
-  const searchInput = document.getElementById('search_query');
-  const resultsDiv = document.getElementById('searchResults');
-
-  async function doSearch() {
-    const query = searchInput.value.trim();
-    if (query.length < 2) return;
-
-    resultsDiv.innerHTML = '<em>Searching...</em>';
-
-    // Build URL with auth if credentials are needed
-    const url = new URL(window.location.origin + '/search');
-    url.searchParams.set('q', query);
-
-    {% if need_credentials %}
-    // For non-LOCAL_CREDENTIALS mode, embed credentials in URL
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    if (email && password) {
-      url.username = encodeURIComponent(email);
-      url.password = encodeURIComponent(password);
-    }
-    {% endif %}
-
-    try {
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        const text = await response.text();
-        resultsDiv.innerHTML = '<span style="color:red">Error: ' + text + '</span>';
-        return;
+  <script>
+    const input = document.getElementById('podcast_id');
+    input.addEventListener('input', function () {
+      const val = this.value.trim();
+      const match = val.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (match) {
+        this.value = match[0];
       }
-      const data = await response.json();
-      if (!data.results || data.results.length === 0) {
-        resultsDiv.innerHTML = '<em>No podcasts found.</em>';
-        return;
+    });
+
+{{ if .NeedCredentials }}
+    // Forward form credentials to HTMX requests so the search endpoint can authenticate.
+    document.addEventListener('htmx:configRequest', function(evt) {
+      var email = document.getElementById('email');
+      var password = document.getElementById('password');
+      var region = document.getElementById('region');
+      var locale = document.getElementById('locale');
+      if (email && password && email.value && password.value) {
+        var regionVal = region ? region.value : 'nl';
+        var localeVal = locale ? locale.value : 'nl-NL';
+        var userPart = email.value + ',' + regionVal + ',' + localeVal;
+        evt.detail.headers['Authorization'] = 'Basic ' + btoa(userPart + ':' + password.value);
       }
-      let html = '<ul style="list-style:none;padding:0;margin:0;">';
-      for (const podcast of data.results) {
-        html += '<li style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;border-bottom:1px solid #eee;cursor:pointer;" onclick="selectPodcast(\'' + podcast.id + '\')">';
-        if (podcast.coverImageUrl) {
-          html += '<img src="' + podcast.coverImageUrl + '" width="48" height="48" style="border-radius:4px;object-fit:cover;">';
-        }
-        html += '<div><strong>' + podcast.title + '</strong>';
-        if (podcast.authorName) html += '<br><small>' + podcast.authorName + '</small>';
-        html += '</div></li>';
-      }
-      html += '</ul>';
-      resultsDiv.innerHTML = html;
-    } catch (err) {
-      resultsDiv.innerHTML = '<span style="color:red">Search failed: ' + err.message + '</span>';
-    }
-  }
+    });
+{{ end }}
 
-  searchBtn.addEventListener('click', doSearch);
-  searchInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      doSearch();
-    }
-  });
-
-  window.selectPodcast = function(id) {
-    document.getElementById('podcast_id').value = id;
-    resultsDiv.innerHTML = '';
-    searchInput.value = '';
-  };
-</script>
-
-{% endblock %}
+    window.selectPodcast = function(id) {
+      document.getElementById('podcast_id').value = id;
+      document.getElementById('searchResults').innerHTML = '';
+    };
+  </script>
+</body>
+</html>

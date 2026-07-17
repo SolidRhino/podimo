@@ -1,0 +1,16 @@
+{{ define "feed_result" }}
+<p><a href="{{ .URL }}" id="feed-url">{{ .URL }}</a></p>
+
+<div class="feed-actions" x-data="{ copied: false, url: document.getElementById('feed-url').href }">
+  <button type="button"
+          @click="navigator.clipboard.writeText(url).then(() => { copied = true; setTimeout(() => copied = false, 2000) })">
+    <span x-text="copied ? 'Copied!' : 'Copy to clipboard'"></span>
+  </button>
+</div>
+
+<div class="qrcode-section">
+  <h2>QR Code</h2>
+  <p>Scan with your phone to add the feed directly.</p>
+  <div class="qrcode"></div>
+</div>
+{{ end }}

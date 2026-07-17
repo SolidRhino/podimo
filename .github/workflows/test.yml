@@ -10,12 +10,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
     env:
-      # Ensure imports like 'import main' and 'import podimo.client' work
-      PYTHONPATH: ${{ github.workspace }}
       # Don't leak credentials from any .env that might exist
       PODIMO_BIND_HOST: "127.0.0.1:12104"
 
@@ -23,29 +18,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          go-version: "1.26.5"
 
-      - name: Install dependencies
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run linter
+        run: go vet ./...
+
+      - name: Check formatting
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run type checker
-        run: python -m mypy podimo/ main.py
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files need formatting:"
+            gofmt -l .
+            exit 1
+          fi
 
       - name: Run tests with coverage
-        run: python -m pytest --cov=podimo --cov=main --cov-report=xml --cov-report=term tests/
-        env:
-          PYTHONPATH: ${{ github.workspace }}
+        run: go test -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.10'
         uses: codecov/codecov-action@v4
         with:
-          files: ./coverage.xml
+          files: ./coverage.out
           fail_ci_if_error: false
           verbose: true
         env:
