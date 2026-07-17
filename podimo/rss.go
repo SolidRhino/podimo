@@ -230,7 +230,7 @@ func URLHeadInfo(ctx context.Context, client *http.Client, id, urlStr string, he
 		}
 
 		// Close the body on every path so non-2xx responses never leak.
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Reject non-2xx before reading/caching headers: a 404/500/redirect body
 		// must not poison the cache with bogus content-length/type.

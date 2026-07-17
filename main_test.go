@@ -188,7 +188,7 @@ func TestHandleFeed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcast": map[string]interface{}{
 					"title":       "Test Podcast",
@@ -223,8 +223,8 @@ func TestHandleFeed(t *testing.T) {
 
 	// Pre-cache token and head info to skip login and HEAD requests
 	key := podimo.TokenKey("u", "p")
-	app.tokenCache.Set(key, "fake-token", time.Hour)
-	app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	_ = app.tokenCache.Set(key, "fake-token", time.Hour)
+	_ = app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
@@ -247,7 +247,7 @@ func TestHandleFeedPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcast": map[string]interface{}{
 					"title":       "Path Podcast",
@@ -278,8 +278,8 @@ func TestHandleFeedPath(t *testing.T) {
 	app := setupTestAppWithMock(t, srv.URL)
 	// URL-embedded credentials mode
 	key := podimo.TokenKey("user", "pass")
-	app.tokenCache.Set(key, "fake-token", time.Hour)
-	app.headCache.Set("ep2", map[string]interface{}{"length": "200", "type": "audio/mpeg"}, time.Hour)
+	_ = app.tokenCache.Set(key, "fake-token", time.Hour)
+	_ = app.headCache.Set("ep2", map[string]interface{}{"length": "200", "type": "audio/mpeg"}, time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/user/pass/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
@@ -326,7 +326,7 @@ func TestHandleSearch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcastsAutocomplete": []interface{}{
 					map[string]interface{}{
@@ -343,7 +343,7 @@ func TestHandleSearch(t *testing.T) {
 	app.cfg.LocalCredentials = true
 	app.cfg.Email = "u"
 	app.cfg.Password = "p"
-	app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
@@ -363,7 +363,7 @@ func TestHandleSubscriptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcastsFollowed": []interface{}{
 					map[string]interface{}{
@@ -380,7 +380,7 @@ func TestHandleSubscriptions(t *testing.T) {
 	app.cfg.LocalCredentials = true
 	app.cfg.Email = "u"
 	app.cfg.Password = "p"
-	app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
@@ -400,7 +400,7 @@ func TestHandleFeed_AuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"errors": []map[string]interface{}{
 				{"message": "Unauthorized"},
 			},
@@ -413,7 +413,7 @@ func TestHandleFeed_AuthError(t *testing.T) {
 	app.cfg.Email = "u"
 	app.cfg.Password = "p"
 	key := podimo.TokenKey("u", "p")
-	app.tokenCache.Set(key, "fake-token", time.Hour)
+	_ = app.tokenCache.Set(key, "fake-token", time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
@@ -429,7 +429,7 @@ func TestHandleFeedPath_AuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"errors": []map[string]interface{}{
 				{"message": "unauthenticated"},
 			},
@@ -439,7 +439,7 @@ func TestHandleFeedPath_AuthError(t *testing.T) {
 
 	app := setupTestAppWithMock(t, srv.URL)
 	key := podimo.TokenKey("user", "pass")
-	app.tokenCache.Set(key, "fake-token", time.Hour)
+	_ = app.tokenCache.Set(key, "fake-token", time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/user/pass/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)
@@ -531,12 +531,12 @@ func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httpte
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		if idx < len(responses) {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": responses[idx],
 			})
 			idx++
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": map[string]interface{}{},
 			})
 		}
@@ -736,7 +736,7 @@ func TestHandleFeed_StaleTokenRetry(t *testing.T) {
 
 		// Call 1: GetPodcasts with stale token → auth error
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"errors": []map[string]interface{}{
 					{"message": "Unauthorized"},
 				},
@@ -745,19 +745,19 @@ func TestHandleFeed_StaleTokenRetry(t *testing.T) {
 		}
 		// Calls 2-4: RefreshToken → 3-step login (preregister, onboarding, authorize)
 		if callCount == 2 {
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"}}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"}}})
 			return
 		}
 		if callCount == 3 {
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"userOnboardingFlow": map[string]interface{}{"id": "oid"}}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"userOnboardingFlow": map[string]interface{}{"id": "oid"}}})
 			return
 		}
 		if callCount == 4 {
-			json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithCredentials": map[string]interface{}{"token": "fresh-token"}}})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"tokenWithCredentials": map[string]interface{}{"token": "fresh-token"}}})
 			return
 		}
 		// Call 5: GetPodcasts with fresh token → success
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcast": map[string]interface{}{
 					"title":       "Retry Podcast",
@@ -785,8 +785,8 @@ func TestHandleFeed_StaleTokenRetry(t *testing.T) {
 	app.cfg.Email = "u"
 	app.cfg.Password = "p"
 	key := podimo.TokenKey("u", "p")
-	app.tokenCache.Set(key, "stale-token", time.Hour)
-	app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	_ = app.tokenCache.Set(key, "stale-token", time.Hour)
+	_ = app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL", nil)

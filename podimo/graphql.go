@@ -70,7 +70,7 @@ func (c *GraphQLClient) Query(ctx context.Context, headers map[string]string, qu
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	const maxResponseSize = 10 * 1024 * 1024 // 10MB
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponseSize+1))

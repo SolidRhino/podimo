@@ -268,7 +268,7 @@ func (a *App) rateLimitMiddleware(next http.Handler) http.Handler {
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
+	_, _ = w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
 }
 
 // runHealthcheck probes the local /health endpoint. Returns 0 on HTTP 200, 1
@@ -293,7 +293,7 @@ func runHealthcheck() int {
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
@@ -328,11 +328,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results, err := client.SearchPodcasts(r.Context(), searchQuery)
-	if err != nil {
-		if _, ok := err.(*podimo.AuthenticationError); ok {
-			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-				results, err = client.SearchPodcasts(r.Context(), searchQuery)
-			}
+	if _, ok := err.(*podimo.AuthenticationError); ok {
+		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+			results, err = client.SearchPodcasts(r.Context(), searchQuery)
 		}
 	}
 	if err != nil {
@@ -367,11 +365,9 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results, err := client.GetFollowedPodcasts(r.Context())
-	if err != nil {
-		if _, ok := err.(*podimo.AuthenticationError); ok {
-			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-				results, err = client.GetFollowedPodcasts(r.Context())
-			}
+	if _, ok := err.(*podimo.AuthenticationError); ok {
+		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+			results, err = client.GetFollowedPodcasts(r.Context())
 		}
 	}
 	if err != nil {
@@ -476,11 +472,9 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 	}
 
 	data, err := client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-	if err != nil {
-		if _, ok := err.(*podimo.AuthenticationError); ok {
-			if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-				data, err = client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-			}
+	if _, ok := err.(*podimo.AuthenticationError); ok {
+		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
+			data, err = client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
 		}
 	}
 	if err != nil {
@@ -506,7 +500,7 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 	}
 
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-	w.Write(rssXML)
+	_, _ = w.Write(rssXML)
 }
 
 func (a *App) graphqlEndpoint() string {
@@ -659,7 +653,7 @@ func (a *App) renderPartial(w http.ResponseWriter, name string, data map[string]
 func (a *App) notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(exampleText()))
+	_, _ = w.Write([]byte(exampleText()))
 }
 
 func (a *App) buildFeedURL(podcastID, region, locale string) string {

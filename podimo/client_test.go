@@ -16,12 +16,12 @@ func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httpte
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		if idx < len(responses) {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": responses[idx],
 			})
 			idx++
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": map[string]interface{}{},
 			})
 		}
@@ -38,7 +38,7 @@ func TestNewPodimoClient_Validation(t *testing.T) {
 func TestNewPodimoClient_LoadsCachedToken(t *testing.T) {
 	dir := t.TempDir()
 	tc, _ := NewFileCache(dir)
-	tc.Set(TokenKey("user", "pass"), "cached-token", time.Hour)
+	_ = tc.Set(TokenKey("user", "pass"), "cached-token", time.Hour)
 	gl := NewGraphQLClient("http://localhost", nil)
 	pc, _ := NewFileCache(dir)
 	client, err := NewPodimoClient("user", "pass", "nl", "nl-NL", gl, tc, pc, nil)
@@ -119,7 +119,7 @@ func TestPodimoClient_GetPodcasts_Cache(t *testing.T) {
 	gl := NewGraphQLClient(srv.URL, srv.Client())
 	client, _ := NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
 	// Ensure token is set so GetPodcasts doesn't try to use the mock for login
-	client.Login(context.Background())
+	_, _ = client.Login(context.Background())
 
 	data, err := client.GetPodcasts(context.Background(), "pid", time.Hour)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestPodimoClient_SearchPodcasts_AllVariantsFail(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"errors": []map[string]interface{}{
 				{"message": "bad query"},
 			},
@@ -229,7 +229,7 @@ func TestGetPodcasts_GQLErrorNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"errors": []map[string]interface{}{
 				{"message": "Podcast not found"},
 			},

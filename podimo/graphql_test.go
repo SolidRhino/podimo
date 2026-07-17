@@ -15,7 +15,7 @@ import (
 func TestGraphQLClient_Query_Non200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte("server error"))
+		_, _ = w.Write([]byte("server error"))
 	}))
 	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
@@ -30,7 +30,7 @@ func TestGraphQLClient_Query_GraphQLError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"errors": []map[string]interface{}{
 				{"message": "bad query"},
 			},
@@ -52,7 +52,7 @@ func TestGraphQLClient_Query_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
 				"podcast": map[string]interface{}{"title": "Hello"},
 			},
@@ -75,9 +75,9 @@ func TestGraphQLClient_Query_LargeResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		w.Write([]byte("{\"data\":{"))
-		w.Write(bytes.Repeat([]byte("x"), 11*1024*1024))
-		w.Write([]byte("}}"))
+		_, _ = w.Write([]byte("{\"data\":{"))
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 11*1024*1024))
+		_, _ = w.Write([]byte("}}"))
 	}))
 	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
@@ -94,7 +94,7 @@ func TestGraphQLClient_Query_LargeResponse(t *testing.T) {
 func TestGraphQLClient_Query_401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
-		w.Write([]byte(`{"error":"unauthorized"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 	}))
 	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())
@@ -121,7 +121,7 @@ func TestGraphQLClient_Query_ContextTimeout(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{}})
 	}))
 	t.Cleanup(srv.Close)
 	c := NewGraphQLClient(srv.URL, srv.Client())

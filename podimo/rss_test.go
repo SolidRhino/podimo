@@ -64,7 +64,7 @@ func TestExtractAudioURL_StreamMedia(t *testing.T) {
 func TestURLHeadInfo_Cache(t *testing.T) {
 	dir := t.TempDir()
 	c, _ := NewFileCache(dir)
-	c.Set("ep1", map[string]interface{}{"length": "12345", "type": "audio/mpeg"}, time.Hour)
+	_ = c.Set("ep1", map[string]interface{}{"length": "12345", "type": "audio/mpeg"}, time.Hour)
 	cl, ct, err := URLHeadInfo(context.Background(), nil, "ep1", "", nil, c, time.Hour, nil)
 	if err != nil || cl != "12345" || ct != "audio/mpeg" {
 		t.Fatalf("expected cache hit")
@@ -226,7 +226,7 @@ func TestPodcastsToRss_ContextCancel(t *testing.T) {
 	}
 	dir := t.TempDir()
 	hc, _ := NewFileCache(dir)
-	hc.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	_ = hc.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := PodcastsToRss(ctx, "12345678-1234-1234-1234-123456789abc", data, "en-US", hc, false, time.Hour, nil, nil)

@@ -192,11 +192,11 @@ func (c *PodimoClient) getPreregisterToken(ctx context.Context) error {
 
 	tokenWithPreregisterUser, ok := result["tokenWithPreregisterUser"].(map[string]interface{})
 	if !ok || tokenWithPreregisterUser == nil {
-		return fmt.Errorf("Podimo did not provide a tokenWithPreregisterUser")
+		return fmt.Errorf("podimo did not provide a tokenWithPreregisterUser")
 	}
 	token, ok := tokenWithPreregisterUser["token"].(string)
 	if !ok || token == "" {
-		return fmt.Errorf("Podimo did not provide a tokenWithPreregisterUser token")
+		return fmt.Errorf("podimo did not provide a tokenWithPreregisterUser token")
 	}
 	c.preauthToken = token
 	return nil
@@ -216,11 +216,11 @@ func (c *PodimoClient) getOnboardingID(ctx context.Context) error {
 
 	userOnboardingFlow, ok := result["userOnboardingFlow"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("Podimo did not provide a userOnboardingFlow")
+		return fmt.Errorf("podimo did not provide a userOnboardingFlow")
 	}
 	id, ok := userOnboardingFlow["id"].(string)
 	if !ok {
-		return fmt.Errorf("Podimo did not provide an onboarding ID")
+		return fmt.Errorf("podimo did not provide an onboarding ID")
 	}
 	c.preregID = id
 	return nil
