@@ -5,20 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Podimo-to-RSS converter</title>
   <meta name="robots" content="noindex, nofollow">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/fonts.css">
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js" crossorigin="anonymous"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/qrcode.min.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
 </head>
 <body>
+  <a href="#feed-url" class="skip-link">Skip to feed URL</a>
   <h1>Your RSS feed is ready</h1>
 
   <p>Copy this link into your podcast player (only works if it supports custom private RSS feeds).</p>
-
+  <div class="feed-result">
   {{ template "feed_result" . }}
+  </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSE1QMDIzWPHnnv/HakYGWopdB3/oHwxIpRg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      var anchor = document.getElementById('feed-url');
+      var el = document.querySelector('.qrcode');
+      if (anchor && el && window.QRCode) {
+        el.innerHTML = '';
+        new QRCode(el, { text: anchor.href, width: 200, height: 200 });
+      }
+    });
+  </script>
 </body>
 </html>

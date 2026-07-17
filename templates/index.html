@@ -5,17 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Podimo-to-RSS converter</title>
   <meta name="robots" content="noindex, nofollow">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/fonts.css">
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://unpkg.com/htmx.org@2.0.4" crossorigin="anonymous"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js" crossorigin="anonymous"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
 </head>
 <body>
+  <a href="#main-form" class="skip-link">Skip to form</a>
   <h1>Podimo-to-RSS converter</h1>
   <p>This program converts shows on Podimo to an RSS feed that can be used with any normal podcast player.</p>
-
   <details>
     <summary>Using Apple/Facebook/Google to log in to Podimo?</summary>
     <p><strong>Try the following steps:</strong></p>
@@ -35,7 +33,7 @@
   {{ end }}
 
   {{ if .NeedCredentials }}
-  <div class="banner-warning">
+  <div class="banner-warning" role="alert">
     <strong>⚠️ Warning:</strong> Your Podimo credentials will be embedded in the generated feed URL
     (e.g. <code>https://your-email:your-password@…</code>). This URL will be saved in your podcast app,
     browser history, and potentially server logs. Consider using <strong>LOCAL_CREDENTIALS=true</strong>
@@ -43,60 +41,90 @@
   </div>
   {{ end }}
 
-  <form action="./" method="post">
+  <form action="./" method="post" id="main-form">
     {{ if .NeedCredentials }}
-    <label for="email">Your Podimo email address</label>
-    <input type="email" required placeholder="Podimo email address" name="email" id="email">
+    <div class="form-section">
+      <div class="field-group">
+        <label for="email">Your Podimo email address</label>
+        <input type="email" required placeholder="Podimo email address" name="email" id="email" autocomplete="email">
+      </div>
 
-    <label for="password">Your Podimo password</label>
-    <input type="password" required placeholder="Podimo password" name="password" id="password">
+      <div class="field-group">
+        <label for="password">Your Podimo password</label>
+        <input type="password" required placeholder="Podimo password" name="password" id="password" autocomplete="current-password">
+      </div>
+    </div>
     {{ end }}
 
-    <h2>🔍 Search for a podcast</h2>
-    <label for="search_query">Search by name</label>
-    <input type="text" placeholder="e.g. De Staat van Stasse" name="q" id="search_query" minlength="2"
-           hx-get="/search" hx-target="#searchResults"
-           hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']"
-           hx-include="[name='region'], [name='locale']">
-    <button type="button" id="searchBtn" class="btn-secondary"
-            hx-get="/search" hx-target="#searchResults"
-            hx-include="[name='q'], [name='region'], [name='locale']" hx-trigger="click">
-      Search
-    </button>
-    <div id="searchResults" class="search-results"></div>
+    <div class="form-section">
+      <h2>🔍 Search for a podcast</h2>
+      <div class="field-group">
+        <label for="search_query">Search by name</label>
+        <div class="inline-search">
+          <input type="text" placeholder="e.g. De Staat van Stasse" name="q" id="search_query" minlength="2"
+                 aria-label="Search podcasts by name"
+                 hx-get="/search" hx-target="#searchResults"
+                 hx-trigger="keyup changed delay:300ms, keydown[key=='Enter']"
+                 hx-include="[name='region'], [name='locale']"
+                 hx-indicator=".search-loader">
+          <button type="button" id="searchBtn" class="btn-secondary"
+                  aria-label="Search for podcasts"
+                  hx-get="/search" hx-target="#searchResults"
+                  hx-include="[name='q'], [name='region'], [name='locale']" hx-trigger="click"
+                  hx-indicator=".search-loader">
+            Search
+          </button>
+        </div>
+        <div id="searchResults" class="search-results" role="region" aria-live="polite" aria-label="Search results"></div>
+        <p class="htmx-indicator search-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Searching…</p>
+      </div>
+    </div>
 
-    <hr />
 
-    <h2>📻 Your Subscriptions</h2>
-    <button type="button" class="btn-secondary"
-            hx-get="/subscriptions" hx-target="#subscriptionsResults"
-            hx-include="[name='region'], [name='locale']" hx-trigger="click">
-      Show subscriptions
-    </button>
-    <div id="subscriptionsResults" class="search-results"></div>
+    <div class="form-section">
+      <h2>📻 Your Subscriptions</h2>
+      <div class="field-group">
+        <button type="button" class="btn-secondary"
+                aria-label="Load your Podimo subscriptions"
+                hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                hx-include="[name='region'], [name='locale']" hx-trigger="click"
+                hx-indicator=".subs-loader">
+          Show subscriptions
+        </button>
+        <div id="subscriptionsResults" class="search-results" role="region" aria-live="polite" aria-label="Subscriptions"></div>
+        <p class="htmx-indicator subs-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Loading subscriptions…</p>
+      </div>
+    </div>
 
-    <h2>📻 Or use your Podcast ID</h2>
-    <label for="podcast_id">Podcast ID or URL</label>
-    <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-…</code>) or just the ID.</small>
-    <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}">
+    <div class="form-section">
+      <h2>📻 Or use your Podcast ID</h2>
+      <div class="field-group">
+        <label for="podcast_id">Podcast ID or URL</label>
+        <small>Paste the full URL (e.g. <code>https://open.podimo.com/podcast/09c55c96-…</code>) or just the ID.</small>
+        <input placeholder="Podcast ID or URL" required name="podcast_id" id="podcast_id" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}">
+      </div>
 
-    <label for="region">Region</label>
-    <select name="region" id="region">
-      {{ range .Regions }}
-      <option value="{{ .Code }}">{{ .Name }}</option>
-      {{ end }}
-    </select>
+      <div class="field-group">
+        <label for="region">Region</label>
+        <select name="region" id="region">
+          {{ range .Regions }}
+          <option value="{{ .Code }}">{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </div>
 
-    <label for="locale">Locale</label>
-    <select name="locale" id="locale">
-      {{ range .Locales }}
-      <option>{{ . }}</option>
-      {{ end }}
-    </select>
+      <div class="field-group">
+        <label for="locale">Locale</label>
+        <select name="locale" id="locale">
+          {{ range .Locales }}
+          <option>{{ . }}</option>
+          {{ end }}
+        </select>
+      </div>
+    </div>
 
     <footer>
-      Licensed under the EUPL-1.2 license — Source on <a href="https://github.com/izu-x/podimo">GitHub</a><br />
-      If you find this useful, consider <a href="https://www.buymeacoffee.com/thijsr">buying the original author a coffee ☕</a>
+      Licensed under the EUPL-1.2 license — Source on <a href="https://github.com/SolidRhino/podimo" target="_blank" rel="noopener noreferrer">GitHub</a>
     </footer>
 
     <input type="submit" value="Create RSS URL" />
