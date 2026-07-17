@@ -11,3 +11,6 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "ci(deps)"
+    groups:
+      github-actions:
+        patterns: ["*"]
