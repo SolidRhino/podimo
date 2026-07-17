@@ -57,7 +57,7 @@ Two server-rendered HTML pages with a shared external stylesheet. No external co
 | Labels / UI | system-ui, sans-serif | 500 | `1rem` | 1.5 |
 | Small / captions | system-ui, sans-serif | 400 | `0.875rem` | 1.5 |
 
-> **Display serif** for headings (character, editorial weight). **Sans-serif** for body and UI (legibility, neutrality). Newsreader is loaded from Google Fonts (`https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600`).
+> **Display serif** for headings (character, editorial weight). **Sans-serif** for body and UI (legibility, neutrality). Newsreader is self-hosted (`/static/fonts.css` + `/static/newsreader-400.ttf` + `/static/newsreader-600.ttf`).
 
 > Never use `system-ui` for display / heading text.
 
@@ -103,11 +103,11 @@ The stylesheet defines the full design token system (CSS custom properties) and 
 
 The frontend uses **HTMX** for server-driven interactivity (search, subscriptions) and **Alpine.js** for client-side state (copy-to-clipboard feedback, QR code rendering).
 
-- HTMX `2.0.4` — loaded from `unpkg.com`
-- Alpine.js `3.14.8` — loaded from `jsdelivr.net` (with `defer`)
-- `qrcode.min.js` `1.0.0` — loaded from `cdnjs.cloudflare.com` for QR generation
+- HTMX `2.0.4` — self-hosted at `/static/htmx.min.js`
+- Alpine.js `3.14.8` — self-hosted at `/static/alpine.min.js` (with `defer`)
+- `qrcode.min.js` `1.0.0` — self-hosted at `/static/qrcode.min.js` for QR generation
 
-No build step, no bundler. Libraries are loaded via CDN with SRI-compatible crossorigin attributes.
+No build step, no bundler. All libraries are self-hosted under `/static/` — no external CDN requests.
 
 ### Templates
 
@@ -350,4 +350,4 @@ Triggered by `prefers-color-scheme: dark` via the `@media` rule in `static/style
 | `templates/partials/search_results.html` | Partial — HTMX search results list |
 | `templates/partials/subscriptions.html` | Partial — HTMX subscriptions list |
 
-Both page templates link to `static/style.css` and load HTMX + Alpine.js from CDN. Partials are server-rendered snippets swapped into the DOM by HTMX.
+Both page templates link to `/static/fonts.css` and `/static/style.css` and load HTMX, Alpine.js, and QRCode.js from `/static/`. Partials are server-rendered snippets swapped into the DOM by HTMX.
