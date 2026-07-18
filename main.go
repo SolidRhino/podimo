@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"html/template"
@@ -526,6 +528,40 @@ func (a *App) defaultRegionLocale(r *http.Request) (region, locale string) {
 	return region, locale
 }
 
+// feedLastModifiedTime returns the UTC publish time of the newest episode by
+// parsing each episode's PublishDatetime (RFC3339). Returns ok=false if no
+// episode has a parseable publish date.
+func feedLastModifiedTime(data *podimo.PodcastData) (time.Time, bool) {
+	var latest time.Time
+	found := false
+	for _, ep := range data.Episodes {
+		if t, err := time.Parse(time.RFC3339, ep.PublishDatetime); err == nil {
+			if !found || t.After(latest) {
+				latest = t
+				found = true
+			}
+		}
+	}
+	return latest, found
+}
+
+// feedETag returns a strong ETag derived from the content-determining fields of
+// the feed: podcast ID, title, author, episode count, newest publish date, and
+// the public-feeds flag (which changes whether <itunes:block> is emitted). The
+// 16-hex truncation is sufficient for collision resistance over a single
+// feed's lifetime.
+func feedETag(podcastID string, data *podimo.PodcastData, publicFeeds bool) string {
+	var latest string
+	for _, ep := range data.Episodes {
+		if ep.PublishDatetime > latest {
+			latest = ep.PublishDatetime
+		}
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s|%s|%s|%d|%s|%t", podcastID, data.Podcast.Title, data.Podcast.AuthorName, len(data.Episodes), latest, publicFeeds)
+	return `"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
+}
+
 // serveFeed handles the shared tail of handleFeed/handleFeedPath: block-list check,
 // auth, episode fetch (with one stale-token refresh retry), and RSS generation.
 func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, username, password, region, locale string) {
@@ -565,6 +601,33 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 		a.logger.Error("Podcast fetch error", "error", err)
 		http.Error(w, "Something went wrong while fetching the podcasts", http.StatusInternalServerError)
 		return
+	}
+
+	// Conditional GET: emit ETag/Last-Modified and short-circuit 304 when the
+	// client's cached representation is still current. Cache-Control allows
+	// shared proxies to cache (the feed URL already carries credentials, so a
+	// 304 carries no extra secret). Last-Modified is truncated to second
+	// granularity to match HTTP date precision and avoid fractional-second
+	// mismatches between RFC3339 publish times and the If-Modified-Since header.
+	etag := feedETag(podcastID, data, a.cfg.PublicFeeds)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	var lmTime time.Time
+	if t, ok := feedLastModifiedTime(data); ok {
+		lmTime = t.UTC().Truncate(time.Second)
+		w.Header().Set("Last-Modified", lmTime.Format(http.TimeFormat))
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if !lmTime.IsZero() {
+		if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+			if t, err := http.ParseTime(ims); err == nil && !lmTime.After(t) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
 	}
 
 	httpClient := a.getHTTPClient(client.Key())

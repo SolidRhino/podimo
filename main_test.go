@@ -1036,3 +1036,129 @@ func TestWithAuthRetry_SuccessNoRetry(t *testing.T) {
 		t.Fatalf("expected fn called exactly once, got %d", calls)
 	}
 }
+
+// feedMockServer returns a mock Podimo GraphQL server that serves a single
+// episode with a fixed publish date. Reused by the feed-caching tests.
+func feedMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcast": map[string]interface{}{
+					"title":       "Cache Podcast",
+					"description": "Desc",
+					"authorName":  "Author",
+					"language":    "en",
+					"images":      map[string]interface{}{"coverImageUrl": "http://cover.jpg"},
+				},
+				"episodes": []interface{}{
+					map[string]interface{}{
+						"id":              "ep1",
+						"title":           "Episode 1",
+						"publishDatetime": "2023-01-01T00:00:00Z",
+						"audio":           map[string]interface{}{"url": "http://audio.mp3", "duration": 60.0},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// feedTestApp builds a test app pointed at a feed mock with token/head caches
+// pre-populated so requests skip login and HEAD requests.
+func feedTestApp(t *testing.T, srv *httptest.Server) *App {
+	t.Helper()
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+	_ = app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	return app
+}
+
+const feedTestPath = "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL"
+
+func TestHandleFeed_ETag_304(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	// First request captures the ETag.
+	req1 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr1 := httptest.NewRecorder()
+	router.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	etag := rr1.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected non-empty ETag header")
+	}
+
+	// Second request with If-None-Match must return 304 and empty body.
+	req2 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	req2.Header.Set("If-None-Match", etag)
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if rr2.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 304, got %q", rr2.Body.String())
+	}
+}
+
+func TestHandleFeed_CacheControl(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	cc := rr.Header().Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=3600") {
+		t.Fatalf("expected Cache-Control with max-age=3600, got %q", cc)
+	}
+	if !strings.Contains(cc, "stale-while-revalidate") {
+		t.Fatalf("expected stale-while-revalidate in Cache-Control, got %q", cc)
+	}
+}
+
+func TestHandleFeed_LastModified_304(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	// First request captures Last-Modified.
+	req1 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr1 := httptest.NewRecorder()
+	router.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	lm := rr1.Header().Get("Last-Modified")
+	if lm == "" {
+		t.Fatal("expected non-empty Last-Modified header")
+	}
+
+	// Second request with If-Modified-Since set to the same value must 304.
+	req2 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	req2.Header.Set("If-Modified-Since", lm)
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if rr2.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 304, got %q", rr2.Body.String())
+	}
+}
