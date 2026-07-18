@@ -39,11 +39,21 @@ func setupTestApp(t *testing.T) *App {
 		PodcastCacheTime:  time.Hour,
 		HeadCacheTime:     time.Hour,
 		StoreTokensOnDisk: true,
+		DateFormat:        "2006-01-02",
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
@@ -632,6 +642,91 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 	}
 	if cfg.TokenCacheTime != 3600*time.Second {
 		t.Fatalf("expected 3600s, got %v", cfg.TokenCacheTime)
+	}
+}
+
+func TestLoadConfig_DateFormatDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "date_format"} {
+		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
+	}
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DateFormat != "2006-01-02" {
+		t.Fatalf("expected default date_format 2006-01-02, got %q", cfg.DateFormat)
+	}
+}
+
+func TestLoadConfig_DateFormatOverride(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "email", "password"} {
+		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
+	}
+	t.Setenv("PODIMO_DATE_FORMAT", "Jan 2, 2006")
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DateFormat != "Jan 2, 2006" {
+		t.Fatalf("expected Jan 2, 2006, got %q", cfg.DateFormat)
+	}
+}
+
+func TestHandleSubscriptions_FormatsDate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":            "p1",
+						"title":         "Date Format Show",
+						"coverImageUrl": "http://cover.jpg",
+						"episodeCount":  42,
+						"latestEpisode": map[string]interface{}{
+							"publishDatetime": "2024-05-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	// Override the default format to a locale-style layout.
+	app.cfg.DateFormat = "Jan 2, 2006"
+	// Re-parse templates with the new format's FuncMap.
+	app.templates = template.Must(template.New("").Funcs(template.FuncMap{
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(app.cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html"))
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "updated May 1, 2024") {
+		t.Fatalf("expected 'updated May 1, 2024' in HTML, got: %s", body)
 	}
 }
 

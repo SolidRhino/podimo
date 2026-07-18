@@ -23,6 +23,12 @@ public_feeds: false
 # clients can spoof the header enables rate-limit bypass.
 trusted_proxy_header: ""
 
+# Date format for the latest-episode timestamp shown on /subscriptions.
+# Any Go time.Format layout string. Default is ISO date only.
+# Examples: "2006-01-02" (default), "Jan 2, 2006", "02-01-2006",
+#           "Mon Jan 2 15:04", "2006-01-02 15:04:05".
+date_format: "2006-01-02"
+
 # Proxy / scraper settings
 http_proxy: ""
 zenrows_api: ""
