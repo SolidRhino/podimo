@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -876,5 +877,73 @@ func TestLoggingMiddleware_Status(t *testing.T) {
 	}
 	if !strings.Contains(logged, "Request completed") {
 		t.Fatalf("expected completion log line, got:\n%s", logged)
+	}
+}
+
+func TestHandleReady_Reachable(t *testing.T) {
+	// Any HTTP response (even 405) proves reachability.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	t.Cleanup(srv.Close)
+	app := setupTestApp(t)
+	app.ready = &readyProbe{endpoint: srv.URL}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	app.handleReady(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 ready, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ready"`) {
+		t.Fatalf("expected ready body, got %s", rr.Body.String())
+	}
+}
+
+func TestHandleReady_Unreachable(t *testing.T) {
+	app := setupTestApp(t)
+	// Port 1 is reserved and will refuse connections.
+	app.ready = &readyProbe{endpoint: "http://127.0.0.1:1"}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	app.handleReady(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"not ready"`) {
+		t.Fatalf("expected not-ready body, got %s", rr.Body.String())
+	}
+}
+
+func TestHandleReady_Cached(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(srv.Close)
+	app := setupTestApp(t)
+	app.ready = &readyProbe{endpoint: srv.URL}
+
+	// First call probes the server.
+	req1 := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr1 := httptest.NewRecorder()
+	app.handleReady(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first call: expected 200, got %d", rr1.Code)
+	}
+
+	// Second call within the 10s cache window must NOT hit the server again.
+	req2 := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr2 := httptest.NewRecorder()
+	app.handleReady(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second call: expected 200, got %d", rr2.Code)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("expected server to be hit exactly once, got %d", got)
 	}
 }
