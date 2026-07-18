@@ -234,9 +234,24 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
-		next.ServeHTTP(w, r)
-		a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", rec.status, "duration", time.Since(start).Seconds())
 	})
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the response status
+// code for request logging. It delegates every WriteHeader call to the
+// underlying writer while recording the code. Handlers that never call
+// WriteHeader implicitly report 200 OK, which is the zero value.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
 func (a *App) clientIP(r *http.Request) string {
