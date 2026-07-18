@@ -348,6 +348,9 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 	limit := 100
 	offset := 0
 	var fullData PodcastData
+	const maxPages = 200
+	seen := make(map[string]struct{})
+	var pages int
 
 	for {
 		variables := map[string]interface{}{
@@ -373,6 +376,25 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 			return nil, fmt.Errorf("fetch episodes for %s: %w", podcastID, err)
 		}
 
+		pages++
+
+		// Dedup guard: if any episode ID repeats across pages, the API is
+		// looping and pagination is stuck — stop now rather than hang.
+		repeated := false
+		for _, ep := range page.Episodes {
+			if _, ok := seen[ep.ID]; ok {
+				repeated = true
+				break
+			}
+		}
+		if repeated {
+			c.logger.Warn("GetPodcasts: detected repeated episode, stopping pagination", "podcast_id", podcastID)
+			break
+		}
+		for _, ep := range page.Episodes {
+			seen[ep.ID] = struct{}{}
+		}
+
 		if offset == 0 {
 			fullData = page
 		} else {
@@ -380,6 +402,10 @@ func (c *PodimoClient) GetPodcasts(ctx context.Context, podcastID string, cacheT
 		}
 
 		if len(page.Episodes) < limit {
+			break
+		}
+		if pages >= maxPages {
+			c.logger.Warn("GetPodcasts: hit page cap", "podcast_id", podcastID, "pages", pages)
 			break
 		}
 		offset += limit
