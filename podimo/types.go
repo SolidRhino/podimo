@@ -54,7 +54,7 @@ type FollowedPodcast struct {
 	ID            string        `json:"id"`
 	Title         string        `json:"title"`
 	CoverImageURL string        `json:"coverImageUrl"`
-	EpisodeCount  int           `json:"episodeCount"`
+	EpisodeCount  float64       `json:"episodeCount"`
 	LatestEpisode latestEpisode `json:"latestEpisode"`
 }
 
