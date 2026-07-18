@@ -528,22 +528,47 @@ func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]FollowedPodca
 	}
 
 	headers := c.generateHeaders(c.token)
-	query := `query PodcastsFollowed {
-		podcastsFollowed {
-			id
-			title
-			coverImageUrl
+
+	// Try the extended query first (with episode count + latest publish date);
+	// fall back to the minimal variant if the schema rejects the extra fields.
+	// Field names (episodesCount, latestEpisodePublishDatetime) are unverified
+	// against the live Podimo schema, so the fallback keeps the feature working
+	// (without counts) if they don't exist.
+	variants := []string{
+		`query PodcastsFollowed {
+			podcastsFollowed {
+				id
+				title
+				coverImageUrl
+				episodesCount
+				latestEpisodePublishDatetime
+			}
+		}`,
+		`query PodcastsFollowed {
+			podcastsFollowed {
+				id
+				title
+				coverImageUrl
+			}
+		}`,
+	}
+
+	var lastErr error
+	for _, q := range variants {
+		var result struct {
+			Podcasts []FollowedPodcast `json:"podcastsFollowed"`
 		}
-	}`
-
-	var result struct {
-		Podcasts []FollowedPodcast `json:"podcastsFollowed"`
+		if err := c.queryWithTimeout(ctx, headers, q, nil, &result); err != nil {
+			lastErr = err
+			continue
+		}
+		return result.Podcasts, nil
 	}
-	if err := c.queryWithTimeout(ctx, headers, query, nil, &result); err != nil {
-		return nil, mapAuthError(err)
+	if lastErr != nil {
+		c.logger.Warn("GetFollowedPodcasts: all variants failed", "error", lastErr)
+		return nil, mapAuthError(lastErr)
 	}
-
-	return result.Podcasts, nil
+	return []FollowedPodcast{}, nil
 }
 
 func GetPodcastName(data *PodcastData) string {

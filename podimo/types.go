@@ -51,7 +51,9 @@ type SearchResult struct {
 
 // FollowedPodcast represents a single entry from podcastsFollowed.
 type FollowedPodcast struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	CoverImageURL string `json:"coverImageUrl"`
+	ID                           string `json:"id"`
+	Title                        string `json:"title"`
+	CoverImageURL                string `json:"coverImageUrl"`
+	EpisodesCount                int    `json:"episodesCount"`
+	LatestEpisodePublishDatetime string `json:"latestEpisodePublishDatetime"`
 }
