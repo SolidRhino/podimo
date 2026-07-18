@@ -188,6 +188,7 @@ Key settings:
 | `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials when `PODIMO_LOCAL_CREDENTIALS=true` |
 | `PODIMO_ZENROWS_API` / `PODIMO_SCRAPER_API` | — | Anti-bot proxy keys |
 | `PODIMO_PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
+| `PODIMO_DATE_FORMAT` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
 
 Full reference: [config.example.yaml](config.example.yaml) or [.env.example](.env.example)
 
