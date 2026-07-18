@@ -39,6 +39,7 @@ type Config struct {
 	HeadCacheTime      time.Duration       `koanf:"head_cache_time"`
 	PublicFeeds        bool                `koanf:"public_feeds"`
 	TrustedProxyHeader string              `koanf:"trusted_proxy_header"`
+	DateFormat         string              `koanf:"date_format"`
 	Locales            []string            `koanf:"-"`
 	Regions            []Region            `koanf:"-"`
 	Blocked            map[string]struct{} `koanf:"-"`
@@ -72,6 +73,7 @@ func LoadConfig(configFile string) (*Config, error) {
 		"head_cache_time":      (7 * 24 * time.Hour).String(),
 		"public_feeds":         false,
 		"trusted_proxy_header": "",
+		"date_format":          "2006-01-02",
 	}
 	if err := k.Load(confmap.Provider(defaults, ""), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)

@@ -12,7 +12,7 @@
     <div>
       <strong>{{ .Title }}</strong>
       {{ if .EpisodeCount }}
-      <br><small>{{ printf "%.0f" .EpisodeCount }} episodes{{ if .LatestEpisode.PublishDatetime }} · updated {{ .LatestEpisode.PublishDatetime }}{{ end }}</small>
+      <br><small>{{ printf "%.0f" .EpisodeCount }} episodes{{ if .LatestEpisode.PublishDatetime }} · updated {{ formatDate .LatestEpisode.PublishDatetime }}{{ end }}</small>
       {{ end }}
     </div>
   </li>

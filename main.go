@@ -133,7 +133,17 @@ func main() {
 		},
 	}))
 
-	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
 		logger.Error("Failed to parse templates", "error", err)
 		os.Exit(1)
