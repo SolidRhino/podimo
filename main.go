@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"html"
 	"html/template"
 	"log/slog"
 	"net"
@@ -228,6 +230,7 @@ func (a *App) setupRoutes() chi.Router {
 	r.Get("/ready", a.handleReady)
 	r.With(a.rateLimitMiddleware).Get("/search", a.handleSearch)
 	r.With(a.rateLimitMiddleware).Get("/subscriptions", a.handleSubscriptions)
+	r.With(a.rateLimitMiddleware).Get("/subscriptions.opml", a.handleSubscriptionsOPML)
 	r.Get("/", a.handleIndex)
 	r.Post("/", a.handleIndex)
 	r.With(a.rateLimitMiddleware).Get("/feed/{podcast_id}.xml", a.handleFeed)
@@ -458,6 +461,48 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results})
+}
+
+func (a *App) handleSubscriptionsOPML(w http.ResponseWriter, r *http.Request) {
+	username, password, region, locale, ok := a.resolveCredentials(r, w)
+	if !ok {
+		return
+	}
+	if !a.cfg.isValidRegion(region) {
+		http.Error(w, "Invalid region", http.StatusBadRequest)
+		return
+	}
+	if !a.cfg.isValidLocale(locale) {
+		http.Error(w, "Invalid locale", http.StatusBadRequest)
+		return
+	}
+	client, err := a.checkAuth(r.Context(), username, password, region, locale)
+	if err != nil {
+		a.logger.Error("OPML auth failed", "error", err)
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.FollowedPodcast, error) {
+		return client.GetFollowedPodcasts(ctx)
+	})
+	if err != nil {
+		a.logger.Error("OPML fetch error", "error", err)
+		http.Error(w, "Failed to fetch subscriptions", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="podimo-subscriptions.opml"`)
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	buf.WriteString(`<opml version="2.0"><head><title>Podimo Subscriptions</title></head><body>` + "\n")
+	for _, p := range results {
+		feedURL := a.feedURLFor(p.ID, username, password, region, locale)
+		fmt.Fprintf(&buf, `  <outline type="rss" text="%s" title="%s" xmlUrl="%s" />`+"\n",
+			html.EscapeString(p.Title), html.EscapeString(p.Title), html.EscapeString(feedURL))
+	}
+	buf.WriteString(`</body></opml>` + "\n")
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (a *App) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -731,16 +776,9 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var feedURL string
-		if a.cfg.LocalCredentials {
-			feedURL = a.buildFeedURL(podcastID, region, locale)
-		} else {
-			email := r.FormValue("email")
-			password := r.FormValue("password")
-			userPart := fmt.Sprintf("%s,%s,%s", email, region, locale)
-			feedURL = fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
-				a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
-		}
+		email := r.FormValue("email")
+		password := r.FormValue("password")
+		feedURL := a.feedURLFor(podcastID, email, password, region, locale)
 		a.renderFeedLocation(w, feedURL)
 		return
 	}
@@ -806,6 +844,19 @@ func splitUsernameRegionLocale(user string) (username, region, locale string) {
 		return "", "nl", "nl-NL"
 	}
 	return parts[0], parts[1], parts[2]
+}
+
+// feedURLFor builds the feed URL for a podcast. In LocalCredentials mode it
+// delegates to buildFeedURL (no embedded credentials). Otherwise it embeds
+// the username, region, and locale as a comma-separated Basic Auth user,
+// plus the password, matching the format podcast apps expect.
+func (a *App) feedURLFor(podcastID, username, password, region, locale string) string {
+	if a.cfg.LocalCredentials {
+		return a.buildFeedURL(podcastID, region, locale)
+	}
+	userPart := fmt.Sprintf("%s,%s,%s", username, region, locale)
+	return fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
+		a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
 }
 
 func exampleText() string {
