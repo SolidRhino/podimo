@@ -407,11 +407,13 @@ func TestHandleSubscriptions_ShowsMetadata(t *testing.T) {
 			"data": map[string]interface{}{
 				"podcastsFollowed": []interface{}{
 					map[string]interface{}{
-						"id":                           "p1",
-						"title":                        "Metadata Show",
-						"coverImageUrl":                "http://cover.jpg",
-						"episodesCount":                12,
-						"latestEpisodePublishDatetime": "2024-05-01T00:00:00Z",
+						"id":            "p1",
+						"title":         "Metadata Show",
+						"coverImageUrl": "http://cover.jpg",
+						"episodeCount":  12,
+						"latestEpisode": map[string]interface{}{
+							"publishDatetime": "2024-05-01T00:00:00Z",
+						},
 					},
 				},
 			},

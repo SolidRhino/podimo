@@ -529,19 +529,20 @@ func (c *PodimoClient) GetFollowedPodcasts(ctx context.Context) ([]FollowedPodca
 
 	headers := c.generateHeaders(c.token)
 
-	// Try the extended query first (with episode count + latest publish date);
-	// fall back to the minimal variant if the schema rejects the extra fields.
-	// Field names (episodesCount, latestEpisodePublishDatetime) are unverified
-	// against the live Podimo schema, so the fallback keeps the feature working
-	// (without counts) if they don't exist.
+	// The extended query requests episodeCount and the nested latestEpisode
+	// object (verified against the live Podimo schema). The minimal variant
+	// is kept as a defensive fallback in case Podimo changes the schema; it
+	// returns the list without counts/dates.
 	variants := []string{
 		`query PodcastsFollowed {
 			podcastsFollowed {
 				id
 				title
 				coverImageUrl
-				episodesCount
-				latestEpisodePublishDatetime
+				episodeCount
+				latestEpisode {
+					publishDatetime
+				}
 			}
 		}`,
 		`query PodcastsFollowed {

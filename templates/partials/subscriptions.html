@@ -11,8 +11,8 @@
     {{ end }}
     <div>
       <strong>{{ .Title }}</strong>
-      {{ if .EpisodesCount }}
-      <br><small>{{ .EpisodesCount }} episodes{{ if .LatestEpisodePublishDatetime }} · updated {{ .LatestEpisodePublishDatetime }}{{ end }}</small>
+      {{ if .EpisodeCount }}
+      <br><small>{{ .EpisodeCount }} episodes{{ if .LatestEpisode.PublishDatetime }} · updated {{ .LatestEpisode.PublishDatetime }}{{ end }}</small>
       {{ end }}
     </div>
   </li>

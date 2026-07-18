@@ -428,11 +428,13 @@ func TestGetFollowedPodcasts_Extended(t *testing.T) {
 			"data": map[string]interface{}{
 				"podcastsFollowed": []interface{}{
 					map[string]interface{}{
-						"id":                           "p1",
-						"title":                        "Has Count",
-						"coverImageUrl":                "http://cover.jpg",
-						"episodesCount":                12,
-						"latestEpisodePublishDatetime": "2024-05-01T00:00:00Z",
+						"id":            "p1",
+						"title":         "Has Count",
+						"coverImageUrl": "http://cover.jpg",
+						"episodeCount":  12,
+						"latestEpisode": map[string]interface{}{
+							"publishDatetime": "2024-05-01T00:00:00Z",
+						},
 					},
 				},
 			},
@@ -448,11 +450,11 @@ func TestGetFollowedPodcasts_Extended(t *testing.T) {
 	if len(podcasts) != 1 {
 		t.Fatalf("expected 1 podcast, got %d", len(podcasts))
 	}
-	if podcasts[0].EpisodesCount != 12 {
-		t.Fatalf("expected EpisodesCount 12, got %d", podcasts[0].EpisodesCount)
+	if podcasts[0].EpisodeCount != 12 {
+		t.Fatalf("expected EpisodeCount 12, got %d", podcasts[0].EpisodeCount)
 	}
-	if podcasts[0].LatestEpisodePublishDatetime != "2024-05-01T00:00:00Z" {
-		t.Fatalf("expected latest publish date, got %q", podcasts[0].LatestEpisodePublishDatetime)
+	if podcasts[0].LatestEpisode.PublishDatetime != "2024-05-01T00:00:00Z" {
+		t.Fatalf("expected latest publish date, got %q", podcasts[0].LatestEpisode.PublishDatetime)
 	}
 }
 
@@ -466,7 +468,7 @@ func TestGetFollowedPodcasts_FallbackMinimal(t *testing.T) {
 		if calls == 1 {
 			// Schema rejects the extended fields.
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"errors": []map[string]interface{}{{"message": "Cannot query field \"episodesCount\""}},
+				"errors": []map[string]interface{}{{"message": "Cannot query field \"episodeCount\""}},
 			})
 			return
 		}
@@ -495,7 +497,7 @@ func TestGetFollowedPodcasts_FallbackMinimal(t *testing.T) {
 	if podcasts[0].Title != "Minimal" {
 		t.Fatalf("expected title Minimal, got %q", podcasts[0].Title)
 	}
-	if podcasts[0].EpisodesCount != 0 {
-		t.Fatalf("expected zero EpisodesCount on fallback, got %d", podcasts[0].EpisodesCount)
+	if podcasts[0].EpisodeCount != 0 {
+		t.Fatalf("expected zero EpisodeCount on fallback, got %d", podcasts[0].EpisodeCount)
 	}
 }
