@@ -418,3 +418,84 @@ func TestGetPodcasts_PageCapTerminates(t *testing.T) {
 		t.Fatal("GetPodcasts hung; page cap failed to terminate pagination")
 	}
 }
+
+func TestGetFollowedPodcasts_Extended(t *testing.T) {
+	// Extended variant succeeds: metadata fields populated.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":                           "p1",
+						"title":                        "Has Count",
+						"coverImageUrl":                "http://cover.jpg",
+						"episodesCount":                12,
+						"latestEpisodePublishDatetime": "2024-05-01T00:00:00Z",
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	client := newAuthedClient(t, srv.URL)
+
+	podcasts, err := client.GetFollowedPodcasts(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(podcasts) != 1 {
+		t.Fatalf("expected 1 podcast, got %d", len(podcasts))
+	}
+	if podcasts[0].EpisodesCount != 12 {
+		t.Fatalf("expected EpisodesCount 12, got %d", podcasts[0].EpisodesCount)
+	}
+	if podcasts[0].LatestEpisodePublishDatetime != "2024-05-01T00:00:00Z" {
+		t.Fatalf("expected latest publish date, got %q", podcasts[0].LatestEpisodePublishDatetime)
+	}
+}
+
+func TestGetFollowedPodcasts_FallbackMinimal(t *testing.T) {
+	// First variant (extended) returns a GraphQL error; second (minimal) succeeds.
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		if calls == 1 {
+			// Schema rejects the extended fields.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []map[string]interface{}{{"message": "Cannot query field \"episodesCount\""}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":            "p2",
+						"title":         "Minimal",
+						"coverImageUrl": "http://cover.jpg",
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	client := newAuthedClient(t, srv.URL)
+
+	podcasts, err := client.GetFollowedPodcasts(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(podcasts) != 1 {
+		t.Fatalf("expected 1 podcast, got %d", len(podcasts))
+	}
+	if podcasts[0].Title != "Minimal" {
+		t.Fatalf("expected title Minimal, got %q", podcasts[0].Title)
+	}
+	if podcasts[0].EpisodesCount != 0 {
+		t.Fatalf("expected zero EpisodesCount on fallback, got %d", podcasts[0].EpisodesCount)
+	}
+}

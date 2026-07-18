@@ -399,6 +399,49 @@ func TestHandleSubscriptions(t *testing.T) {
 	}
 }
 
+func TestHandleSubscriptions_ShowsMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":                           "p1",
+						"title":                        "Metadata Show",
+						"coverImageUrl":                "http://cover.jpg",
+						"episodesCount":                12,
+						"latestEpisodePublishDatetime": "2024-05-01T00:00:00Z",
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "12 episodes") {
+		t.Fatalf("expected '12 episodes' in HTML, got: %s", body)
+	}
+	if !strings.Contains(body, "updated 2024-05-01") {
+		t.Fatalf("expected 'updated 2024-05-01' in HTML, got: %s", body)
+	}
+}
+
 func TestHandleFeed_AuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
