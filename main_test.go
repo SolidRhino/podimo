@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -945,5 +946,93 @@ func TestHandleReady_Cached(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
 		t.Fatalf("expected server to be hit exactly once, got %d", got)
+	}
+}
+
+func TestWithAuthRetry_RefreshSuccess(t *testing.T) {
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		switch callCount {
+		case 1:
+			// First GetPodcasts attempt: auth error (stale token).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []map[string]interface{}{{"message": "Unauthorized"}},
+			})
+		case 2, 3, 4:
+			// RefreshToken: 3-step login handshake.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"},
+					"userOnboardingFlow":       map[string]interface{}{"id": "oid"},
+					"tokenWithCredentials":     map[string]interface{}{"token": "fresh-token"},
+				},
+			})
+		default:
+			// Retry GetPodcasts after refresh: success.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"podcast":  map[string]interface{}{"title": "T"},
+					"episodes": []interface{}{},
+				},
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	tc, _ := podimo.NewFileCache(dir + "/tokens")
+	pc, _ := podimo.NewFileCache(dir + "/podcasts")
+	// Set the stale token BEFORE constructing the client so the constructor
+	// loads it into client.token and GetPodcasts uses it (and hits the auth
+	// error) on the first attempt.
+	_ = tc.Set(podimo.TokenKey("u", "p"), "stale-token", time.Hour)
+	gl := podimo.NewGraphQLClient(srv.URL, srv.Client())
+	client, _ := podimo.NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
+
+	ctx := context.Background()
+	data, err := withAuthRetry(ctx, client, func(c context.Context) (*podimo.PodcastData, error) {
+		return client.GetPodcasts(c, "pid", 0)
+	})
+	if err != nil {
+		t.Fatalf("expected success after refresh, got %v", err)
+	}
+	if data == nil || data.Podcast.Title != "T" {
+		t.Fatalf("expected data with title T, got %+v", data)
+	}
+}
+
+func TestWithAuthRetry_NoAuthError(t *testing.T) {
+	// A non-auth error must be returned as-is, with no refresh attempted.
+	// withAuthRetry only calls RefreshToken on *AuthenticationError, so a
+	// generic error passes through unchanged even with a nil client.
+	got, err := withAuthRetry(context.Background(), nil, func(ctx context.Context) (string, error) {
+		return "", fmt.Errorf("network down")
+	})
+	if err == nil || err.Error() != "network down" {
+		t.Fatalf("expected 'network down' error to pass through, got %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected zero value, got %q", got)
+	}
+}
+
+func TestWithAuthRetry_SuccessNoRetry(t *testing.T) {
+	// fn succeeds on first call — no refresh, no second invocation.
+	var calls int
+	got, err := withAuthRetry(context.Background(), nil, func(ctx context.Context) (int, error) {
+		calls++
+		return 42, nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("expected 42, got %d", got)
+	}
+	if calls != 1 {
+		t.Fatalf("expected fn called exactly once, got %d", calls)
 	}
 }

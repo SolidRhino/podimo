@@ -366,6 +366,25 @@ func runHealthcheck() int {
 	return 0
 }
 
+// withAuthRetry runs fn against the Podimo client. If fn returns an
+// *AuthenticationError, it refreshes the token once and retries. Returns the
+// final error (nil if the retry succeeded). The downstream caller is still
+// responsible for type-asserting the returned error for status-specific
+// handling (e.g. PodcastNotFoundError, AuthenticationError).
+func withAuthRetry[T any](ctx context.Context, client *podimo.PodimoClient, fn func(context.Context) (T, error)) (T, error) {
+	v, err := fn(ctx)
+	if _, ok := err.(*podimo.AuthenticationError); ok {
+		if refreshErr := client.RefreshToken(ctx); refreshErr == nil {
+			v, err = fn(ctx)
+		}
+	}
+	var zero T
+	if err != nil {
+		return zero, err
+	}
+	return v, nil
+}
+
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
@@ -393,12 +412,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
-	results, err := client.SearchPodcasts(r.Context(), searchQuery)
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			results, err = client.SearchPodcasts(r.Context(), searchQuery)
-		}
-	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.SearchResult, error) {
+		return client.SearchPodcasts(ctx, searchQuery)
+	})
 	if err != nil {
 		a.logger.Error("Search error", "error", err)
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Search failed. Podimo may have changed their API."})
@@ -430,12 +446,9 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := client.GetFollowedPodcasts(r.Context())
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			results, err = client.GetFollowedPodcasts(r.Context())
-		}
-	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.FollowedPodcast, error) {
+		return client.GetFollowedPodcasts(ctx)
+	})
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
 		a.renderPartial(w, "subscriptions.html", map[string]any{"Error": "Failed to fetch subscriptions"})
@@ -537,12 +550,9 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 		return
 	}
 
-	data, err := client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			data, err = client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-		}
-	}
+	data, err := withAuthRetry(r.Context(), client, func(ctx context.Context) (*podimo.PodcastData, error) {
+		return client.GetPodcasts(ctx, podcastID, a.cfg.PodcastCacheTime)
+	})
 	if err != nil {
 		if _, ok := err.(*podimo.PodcastNotFoundError); ok {
 			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
