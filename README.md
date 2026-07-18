@@ -30,7 +30,7 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 🔍 **Search by name** — No need to hunt for UUIDs on Podimo's website. Type a podcast name and pick from results.
 
-📻 **Your subscriptions** — After logging in, view all podcasts you follow and generate feeds with one click.
+📻 **Your subscriptions** — After logging in, view all podcasts you follow with episode counts and latest-episode dates, and generate feeds with one click.
 
 🩺 **Health & readiness endpoints** — A lightweight `/health` liveness probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK`, and a separate `/ready` endpoint that verifies outbound reachability to the Podimo API (for Kubernetes readiness probes).
 

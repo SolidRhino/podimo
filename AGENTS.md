@@ -307,7 +307,7 @@ Users no longer need to manually extract podcast IDs from Podimo URLs. The web U
 
 1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
-2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query).
+2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
 
 The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) - the UUID is extracted via client-side JavaScript regex.
 
@@ -383,6 +383,7 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 | `PODIMO_PODCAST_CACHE_TIME` / `podcast_cache_time` | `21600s` | Episode list cache TTL |
 | `PODIMO_HEAD_CACHE_TIME` / `head_cache_time` | `604800s` | HEAD response cache TTL |
 | `PODIMO_PUBLIC_FEEDS` / `public_feeds` | `false` | Remove `<itunes:block>` from RSS |
+| `PODIMO_DATE_FORMAT` / `date_format` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
 | `PODIMO_DEBUG` / `debug` | `false` | Verbose `slog` logging
 
 ## Security Notes for Agents
