@@ -32,7 +32,7 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 📻 **Your subscriptions** — After logging in, view all podcasts you follow and generate feeds with one click.
 
-🩺 **Health endpoint** — A lightweight `/health` probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK` (works on the `scratch` base image with no shell).
+🩺 **Health & readiness endpoints** — A lightweight `/health` liveness probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK`, and a separate `/ready` endpoint that verifies outbound reachability to the Podimo API (for Kubernetes readiness probes).
 
 🚀 **Single static binary** — Rewritten in Go, compiles to one executable with no runtime dependencies, packaged in a zero-attack-surface `scratch` Docker image.
 
@@ -166,7 +166,8 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 | Endpoint | Description | Auth |
 |----------|-------------|------|
 | `GET /` | Web interface (form + search) | — |
-| `GET /health` | JSON health probe for Docker/K8s | — |
+| `GET /health` | JSON liveness probe for Docker `HEALTHCHECK` | — |
+| `GET /ready` | JSON readiness probe; checks Podimo API reachability (use for K8s readiness) | — |
 | `GET /search?q=...` | Search podcasts by name | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /subscriptions` | List followed podcasts | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /feed/<id>.xml` | RSS feed (credentials in URL) | Basic Auth |
