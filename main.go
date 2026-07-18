@@ -49,6 +49,7 @@ type App struct {
 	headCache    *podimo.FileCache
 	clients      *podimo.BoundedMap[string, *http.Client]
 	logLevel     *slog.LevelVar
+	ready        *readyProbe
 }
 
 type RateLimiter struct {
@@ -172,6 +173,7 @@ func main() {
 			},
 		}),
 	}
+	app.ready = &readyProbe{endpoint: app.graphqlEndpoint()}
 
 	router := app.setupRoutes()
 
@@ -221,6 +223,7 @@ func (a *App) setupRoutes() chi.Router {
 	r.Handle("/static/*", http.FileServer(http.FS(staticFS)))
 
 	r.Get("/health", a.handleHealth)
+	r.Get("/ready", a.handleReady)
 	r.With(a.rateLimitMiddleware).Get("/search", a.handleSearch)
 	r.With(a.rateLimitMiddleware).Get("/subscriptions", a.handleSubscriptions)
 	r.Get("/", a.handleIndex)
@@ -284,6 +287,54 @@ func (a *App) rateLimitMiddleware(next http.Handler) http.Handler {
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
+}
+
+// readyProbe checks outbound reachability of the Podimo GraphQL endpoint.
+// It caches the result for 10 seconds so orchestration probes polling /ready
+// do not generate a request per probe. Any HTTP response (even 405/404)
+// proves reachability; only connection failures or timeouts mark it unready.
+type readyProbe struct {
+	endpoint string
+	mu       sync.Mutex
+	ok       bool
+	checked  time.Time
+}
+
+func (rp *readyProbe) check(ctx context.Context) bool {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	if time.Since(rp.checked) < 10*time.Second {
+		return rp.ok
+	}
+	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx2, http.MethodGet, rp.endpoint, nil)
+	if err != nil {
+		rp.ok = false
+		rp.checked = time.Now()
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		rp.ok = false
+		rp.checked = time.Now()
+		return false
+	}
+	_ = resp.Body.Close()
+	rp.ok = true
+	rp.checked = time.Now()
+	return true
+}
+
+func (a *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	if a.ready == nil || !a.ready.check(r.Context()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not ready","service":"podimo-rss"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ready","service":"podimo-rss"}`))
 }
 
 // runHealthcheck probes the local /health endpoint. Returns 0 on HTTP 200, 1
