@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"html/template"
@@ -848,5 +849,32 @@ func TestClientsMap_EvictionClosesIdleConnections(t *testing.T) {
 	}
 	if tt2.closedIdle {
 		t.Fatal("expected non-evicted client's CloseIdleConnections to NOT be called")
+	}
+}
+
+func TestLoggingMiddleware_Status(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	app := setupTestApp(t)
+	app.logger = logger
+
+	// Build a handler that deliberately writes 404, wrapped in the middleware.
+	mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/some-missing", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "status=404") {
+		t.Fatalf("expected log to contain status=404, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "Request completed") {
+		t.Fatalf("expected completion log line, got:\n%s", logged)
 	}
 }
