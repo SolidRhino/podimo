@@ -398,6 +398,7 @@ func TestHandleSubscriptions(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -440,6 +441,7 @@ func TestHandleSubscriptions_ShowsMetadata(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -730,6 +732,7 @@ func TestHandleSubscriptions_FormatsDate(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -1421,5 +1424,22 @@ func TestHandleSubscriptionsOPML(t *testing.T) {
 	// Each outline must carry an xmlUrl that contains the podcast ID.
 	if !strings.Contains(body, "id-a") || !strings.Contains(body, "id-b") {
 		t.Fatalf("expected feed URLs containing podcast IDs in OPML, got %s", body)
+	}
+}
+
+func TestHandleSubscriptions_DirectVisitRedirects(t *testing.T) {
+	app := setupTestApp(t)
+	router := app.setupRoutes()
+
+	// Direct GET without the HTMX header must redirect to /.
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected Location /, got %q", loc)
 	}
 }
