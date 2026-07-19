@@ -1,7 +1,7 @@
 # Agent Context: Podimo to RSS
 
 > This file provides context for AI assistants working on the codebase.
-> Last updated: 2026-05-26
+> Last updated: 2026-07-19
 
 ## Language Policy
 
@@ -31,7 +31,7 @@ Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only wher
 ## Quick Architecture
 
 ```
-main.go          → HTTP server, routes, handlers, middleware, RSS feed serving
+main.go          → HTTP server, routes, handlers, middleware (logging with status capture, rate limiting), RSS feed serving with ETag/Last-Modified/Cache-Control, /ready probe, /subscriptions.opml export, withAuthRetry helper, feedURLFor builder
 config.go        → Environment variables, constants, block list, Config struct
 podimo/
   client.go      → GraphQL API client (login, episode fetching, search, subscriptions)
@@ -201,9 +201,10 @@ Requests are logged at both start and completion with timing via a `chi` middlew
 func (a *App) loggingMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         start := time.Now()
-        a.logger.Debug("Request started", "url", redactURLString(r.URL.String()), ...)
-        next.ServeHTTP(w, r)
-        a.logger.Debug("Request completed", "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
+        a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
+        rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+        next.ServeHTTP(rec, r)
+        a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", rec.status, "duration", time.Since(start).Seconds())
     })
 }
 ```
@@ -219,6 +220,34 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
     w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
 }
 ```
+
+### Ready Endpoint
+Distinct from `/health` (a cheap liveness probe), `/ready` verifies outbound reachability to the Podimo GraphQL endpoint. A `readyProbe` caches the result for 10 seconds so orchestration probes do not generate a request per poll. Any HTTP response (even 405/404) proves reachability; only connection failures or timeouts mark it unready. Returns 503 when unreachable, 200 when reachable. Not rate-limited, matching `/health`. Use for Kubernetes readiness probes; use `/health` for liveness.
+
+```go
+type readyProbe struct {
+    endpoint string
+    mu       sync.Mutex
+    ok       bool
+    checked  time.Time
+}
+```
+
+### Auth Retry Helper
+The 3 sites that call the Podimo client (`handleSearch`, `handleSubscriptions`, `serveFeed`) share a generic `withAuthRetry[T]` that runs the call, refreshes the token once on `*AuthenticationError`, and retries. Returns the zero value on error. Callers still type-assert the returned error for status-specific handling (`PodcastNotFoundError`, `AuthenticationError`).
+
+```go
+func withAuthRetry[T any](ctx context.Context, client *podimo.PodimoClient, fn func(context.Context) (T, error)) (T, error)
+```
+
+### Pagination Guard
+`GetPodcasts` paginates episodes in pages of 100. Two guards prevent pathological infinite loops: a `maxPages` cap (200) and a seen-episode-ID dedup map that breaks early if the API repeats an ID across pages. Both log a warning and stop pagination.
+
+### Feed HTTP Caching
+`serveFeed` emits conditional-GET headers so podcast apps and shared proxies can cache: a strong `ETag` (sha256 of content-determining fields, 16 hex chars), a `Last-Modified` derived from the newest episode publish time (truncated to second granularity), and `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`. `If-None-Match` and `If-Modified-Since` short-circuit to `304 Not Modified`. The ETag covers podcast ID, title, author, episode count, newest publish date, and the `public_feeds` flag.
+
+### OPML Export
+`GET /subscriptions.opml` returns the user's followed podcasts as an OPML 2.0 document with `xmlUrl` entries pointing at the per-podcast RSS feeds, downloadable as an attachment. Auth mirrors `/subscriptions`. Uses `feedURLFor` (the single feed-URL builder shared with `handleIndex`) which embeds credentials in non-local mode or delegates to `buildFeedURL` in `LocalCredentials` mode.
 
 ## Common Tasks
 
@@ -317,14 +346,15 @@ There is now a **Go test suite** with 6 test files:
 
 | File | Coverage |
 |------|----------|
-| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/search` 200, `/subscriptions` 200, 404, 400 for invalid UUID, rate limiter behavior |
-| `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling |
+| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/ready` (reachable/unreachable/cached), `/search` 200, `/subscriptions` 200 + metadata rendering, `/subscriptions.opml`, feed ETag/304/Cache-Control/Last-Modified, `withAuthRetry`, `statusRecorder` logging, `feedURLFor`, rate limiter behavior, 404, 400 for invalid UUID |
+| `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling, `GetPodcasts` pagination dedup + page cap, `GetFollowedPodcasts` extended + minimal fallback |
 | `podimo/graphql_test.go` | `GraphQLClient.Query` status-code handling, structured `GQLError` extraction, 10 MB limit |
 | `podimo/rss_test.go` | `PodcastsToRss` XML output, `ExtractAudioURL`, `URLHeadInfo`, content-type logic, `chunks` |
 | `podimo/cache_test.go` | `FileCache` get/set, TTL expiration, concurrent access |
 | `podimo/boundedmap_test.go` | `BoundedMap` get/set, LRU eviction, TTL expiration, concurrent access |
 
 Run with:
+```bash
 just test
 ```
 
