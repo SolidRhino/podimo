@@ -40,6 +40,7 @@ func setupTestApp(t *testing.T) *App {
 		HeadCacheTime:     time.Hour,
 		StoreTokensOnDisk: true,
 		DateFormat:        "2006-01-02",
+		LogLevel:          "info",
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -601,14 +602,25 @@ func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httpte
 	}))
 }
 
-func TestLoadConfig_InvalidBool(t *testing.T) {
-	t.Setenv("PODIMO_DEBUG", "maybe")
+func TestLoadConfig_InvalidLogLevel(t *testing.T) {
+	t.Setenv("PODIMO_LOG_LEVEL", "verbose")
 	_, err := LoadConfig("")
 	if err == nil {
-		t.Fatal("expected error for invalid DEBUG value")
+		t.Fatal("expected error for invalid LOG_LEVEL value")
 	}
-	if !strings.Contains(err.Error(), "debug") {
-		t.Fatalf("expected debug in error, got %v", err)
+	if !strings.Contains(err.Error(), "log_level") {
+		t.Fatalf("expected log_level in error, got %v", err)
+	}
+}
+
+func TestLoadConfig_InvalidBool(t *testing.T) {
+	t.Setenv("PODIMO_LOCAL_CREDENTIALS", "maybe")
+	_, err := LoadConfig("")
+	if err == nil {
+		t.Fatal("expected error for invalid LOCAL_CREDENTIALS value")
+	}
+	if !strings.Contains(err.Error(), "local_credentials") {
+		t.Fatalf("expected local_credentials in error, got %v", err)
 	}
 }
 
@@ -623,14 +635,14 @@ func TestLoadConfig_InvalidDuration(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_TrimmedBool(t *testing.T) {
-	t.Setenv("PODIMO_DEBUG", " true ")
+func TestLoadConfig_TrimmedLogLevel(t *testing.T) {
+	t.Setenv("PODIMO_LOG_LEVEL", " WARN ")
 	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.Debug {
-		t.Fatal("expected true after trimming")
+	if cfg.LogLevel != "warn" {
+		t.Fatalf("expected warn after trim/lower, got %q", cfg.LogLevel)
 	}
 }
 
@@ -647,7 +659,7 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 
 func TestLoadConfig_DateFormatDefault(t *testing.T) {
 	t.Chdir(t.TempDir())
-	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "date_format"} {
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "date_format"} {
 		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
 	}
 	cfg, err := LoadConfig("")
@@ -661,7 +673,7 @@ func TestLoadConfig_DateFormatDefault(t *testing.T) {
 
 func TestLoadConfig_DateFormatOverride(t *testing.T) {
 	t.Chdir(t.TempDir())
-	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "email", "password"} {
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "email", "password"} {
 		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
 	}
 	t.Setenv("PODIMO_DATE_FORMAT", "Jan 2, 2006")
@@ -736,13 +748,13 @@ func TestLoadConfig_WithYAMLFile(t *testing.T) {
 	// earlier tests/godotenv so the koanf env provider's empty-skip transform
 	// drops them and falls back to the YAML file values instead of the repo .env.
 	t.Chdir(t.TempDir())
-	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
 		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
 	}
 	content := `hostname: "podimo.example.com"
 bind_host: "0.0.0.0:3000"
 protocol: "https"
-debug: true
+log_level: "debug"
 local_credentials: true
 email: "alice@example.com"
 password: "secret"
@@ -768,8 +780,8 @@ public_feeds: true
 	if cfg.Protocol != "https" {
 		t.Errorf("protocol: got %q, want %q", cfg.Protocol, "https")
 	}
-	if !cfg.Debug {
-		t.Error("debug: expected true")
+	if cfg.LogLevel != "debug" {
+		t.Errorf("log_level: got %q, want %q", cfg.LogLevel, "debug")
 	}
 	if !cfg.LocalCredentials {
 		t.Error("local_credentials: expected true")
@@ -1019,6 +1031,67 @@ func TestLoggingMiddleware_Status(t *testing.T) {
 	if !strings.Contains(logged, "Request completed") {
 		t.Fatalf("expected completion log line, got:\n%s", logged)
 	}
+}
+
+func TestLoggingMiddleware_LevelFiltering(t *testing.T) {
+	// At Info level: completion logs, start does not.
+	t.Run("info hides start, shows completion", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		logged := buf.String()
+		if strings.Contains(logged, "Request started") {
+			t.Fatalf("expected 'Request started' hidden at Info, got:\n%s", logged)
+		}
+		if !strings.Contains(logged, "Request completed") {
+			t.Fatalf("expected 'Request completed' at Info, got:\n%s", logged)
+		}
+	})
+
+	// At Debug level: both start and completion log.
+	t.Run("debug shows both", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		logged := buf.String()
+		if !strings.Contains(logged, "Request started") {
+			t.Fatalf("expected 'Request started' at Debug, got:\n%s", logged)
+		}
+		if !strings.Contains(logged, "Request completed") {
+			t.Fatalf("expected 'Request completed' at Debug, got:\n%s", logged)
+		}
+	})
+
+	// 4xx logs at Warn, 5xx logs at Error.
+	t.Run("4xx at warn, 5xx at error", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		// 404 → Warn
+		mw404 := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		buf.Reset()
+		mw404.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
+		if !strings.Contains(buf.String(), "level=WARN") {
+			t.Fatalf("expected 404 to log at WARN, got:\n%s", buf.String())
+		}
+
+		// 500 → Error
+		mw500 := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		buf.Reset()
+		mw500.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
+		if !strings.Contains(buf.String(), "level=ERROR") {
+			t.Fatalf("expected 500 to log at ERROR, got:\n%s", buf.String())
+		}
+	})
 }
 
 func TestHandleReady_Reachable(t *testing.T) {

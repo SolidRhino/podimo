@@ -189,6 +189,7 @@ Key settings:
 | `PODIMO_ZENROWS_API` / `PODIMO_SCRAPER_API` | — | Anti-bot proxy keys |
 | `PODIMO_PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
 | `PODIMO_DATE_FORMAT` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
+| `PODIMO_LOG_LEVEL` | `info` | `slog` level: `debug`, `info`, `warn`, `warning`, `error` |
 
 Full reference: [config.example.yaml](config.example.yaml) or [.env.example](.env.example)
 
