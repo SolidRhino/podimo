@@ -184,6 +184,7 @@ func TestRateLimiting(t *testing.T) {
 	router := app.setupRoutes()
 	for i := 0; i < 9; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+		req.Header.Set("HX-Request", "true")
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 		if i == 8 && rr.Code != http.StatusTooManyRequests {
@@ -361,6 +362,7 @@ func TestHandleSearch(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -867,6 +869,7 @@ func TestRateLimitMiddleware_TrustedProxyHeader(t *testing.T) {
 	// would be rate-limited (max=1).
 	for _, xff := range []string{"1.1.1.1", "2.2.2.2"} {
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+		req.Header.Set("HX-Request", "true")
 		req.Header.Set("X-Forwarded-For", xff)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
@@ -875,8 +878,8 @@ func TestRateLimitMiddleware_TrustedProxyHeader(t *testing.T) {
 		}
 	}
 
-	// A second request from the same XFF IP should now be rate-limited (max=1).
 	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	req.Header.Set("HX-Request", "true")
 	req.Header.Set("X-Forwarded-For", "1.1.1.1")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -1433,6 +1436,23 @@ func TestHandleSubscriptions_DirectVisitRedirects(t *testing.T) {
 
 	// Direct GET without the HTMX header must redirect to /.
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected Location /, got %q", loc)
+	}
+}
+
+func TestHandleSearch_DirectVisitRedirects(t *testing.T) {
+	app := setupTestApp(t)
+	router := app.setupRoutes()
+
+	// Direct GET without the HTMX header must redirect to /.
+	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 

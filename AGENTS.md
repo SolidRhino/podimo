@@ -342,7 +342,7 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 
 Users no longer need to manually extract podcast IDs from Podimo URLs. The web UI provides two discovery mechanisms:
 
-1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
+1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
 2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
 
@@ -439,7 +439,7 @@ If modifying this codebase, consider:
 - Adding more granular rate limits per-user (currently IP-based only)
 - Moving from `FileCache` to `redis` or similar for multi-instance deployments
 - Configuring stricter `go vet` / `staticcheck` / `golangci-lint` rules
-- Adding OpenAPI/Swagger docs for the JSON endpoints (`/search`, `/subscriptions`)
+- Documenting the HTMX partial endpoints (`/search`, `/subscriptions`) and their direct-visit redirect behavior
 
 ## Developer Workflow
 
