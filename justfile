@@ -41,6 +41,15 @@ lint:
 format:
     {{go_cmd}} fmt ./...
 
+# Minify CSS and generate source maps. Originals (style.css, fonts.css)
+# are kept as edit sources; templates link the .min.css versions.
+css-minify:
+    npx -y lightningcss-cli --minify --sourcemap static/style.css -o static/style.min.css
+    npx -y lightningcss-cli --minify --sourcemap static/fonts.css -o static/fonts.min.css
+    # sourceMappingURL is emitted as an absolute path; fix to relative.
+    perl -pi -e 's|sourceMappingURL=static/|sourceMappingURL=|' static/style.min.css
+    perl -pi -e 's|sourceMappingURL=static/|sourceMappingURL=|' static/fonts.min.css
+
 # Remove build artifacts and cache
 clean:
     rm -f {{binary}}

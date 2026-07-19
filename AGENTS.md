@@ -39,7 +39,7 @@ podimo/
   rss.go         → RSS feed generation via `eduncan911/podcast`
   cache.go       → JSON-file-backed TTL cache (token, podcast, HEAD caches)
   boundedmap.go  → Generic in-memory LRU cache with TTL eviction
-static/          → Embedded static files (CSS stylesheet)
+static/          → Embedded static files (minified CSS + source maps, WOFF2 font, JS libraries)
 templates/       → HTML templates (index.html, feed_location.html, partials/*.html), embedded via `embed.FS`
 main_test.go     → Handler tests (health, index, feed, search, subscriptions, rate limiting)
   podimo/client_test.go → PodimoClient constructor, login, token cache
@@ -62,7 +62,8 @@ main_test.go     → Handler tests (health, index, feed, search, subscriptions, 
 | `templates/index.html` | Form: email, password, podcast ID, region, locale. Uses HTMX and Alpine.js for search, subscriptions, and copy-to-clipboard. Extracts UUID from full Podimo URLs via JS regex. |
 | `templates/feed_location.html` | Shows generated feed URL with copy button and QR code. |
 | `templates/partials/*.html` | HTMX partials for search results, subscriptions, and feed result. |
-| `static/style.css` | External stylesheet with dark mode support. |
+| `static/style.css` | Edit-source stylesheet with dark mode support; minified to `style.min.css` (with `.map`) via `just css-minify`. Templates link the minified version. |
+| `static/fonts.css` | Edit-source `@font-face` declarations for the self-hosted Newsreader variable WOFF2 font; minified to `fonts.min.css` (with `.map`). |
 | `config.example.yaml` | Reference configuration file. Documented flat-YAML schema with all options and defaults. Copy to `config.yaml` to customize. |
 | `podimo/boundedmap.go` | `BoundedMap` - generic in-memory LRU cache with optional TTL and background cleanup. Used for per-user `http.Client` pools and rate-limiter IP tracking. |
 | `Dockerfile` | Multi-stage build: `golang:1.26-alpine` builder → `scratch` runtime (zero attack surface: no shell, no package manager, no libs). Bundles CA certs for outbound HTTPS, runs as nonroot UID 65532, and declares `HEALTHCHECK CMD ["/podimo-rss", "healthcheck"]` using the built-in subcommand (no curl/shell needed). |
