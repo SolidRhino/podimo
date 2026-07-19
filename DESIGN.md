@@ -57,7 +57,7 @@ Two server-rendered HTML pages with a shared external stylesheet. No external co
 | Labels / UI | system-ui, sans-serif | 500 | `1rem` | 1.5 |
 | Small / captions | system-ui, sans-serif | 400 | `0.875rem` | 1.5 |
 
-> **Display serif** for headings (character, editorial weight). **Sans-serif** for body and UI (legibility, neutrality). Newsreader is self-hosted (`/static/fonts.css` + `/static/newsreader-400.ttf` + `/static/newsreader-600.ttf`).
+> **Display serif** for headings (character, editorial weight). **Sans-serif** for body and UI (legibility, neutrality). Newsreader is self-hosted as a variable WOFF2 font (`/static/fonts.css` + `/static/newsreader.woff2`), covering weights 400–600.
 
 > Never use `system-ui` for display / heading text.
 
@@ -91,10 +91,10 @@ Two server-rendered HTML pages with a shared external stylesheet. No external co
 
 ### Shared Stylesheet
 
-All pages link to a single shared stylesheet served from `/static/style.css`:
+All pages link to the minified stylesheet served from `/static/style.min.css` (edit source: `static/style.css`, regenerated via `just css-minify`):
 
 ```html
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.min.css">
 ```
 
 The stylesheet defines the full design token system (CSS custom properties) and all component styles. It is embedded via `//go:embed static/*` and served by the Go static file server at runtime.
@@ -308,7 +308,7 @@ body {
 
 ## Dark Mode
 
-Triggered by `prefers-color-scheme: dark` via the `@media` rule in `static/style.css`.
+Triggered by `prefers-color-scheme: dark` via the `@media` rule in `static/style.css` (edit source; served minified as `style.min.css`).
 
 - Never pure `#000` — use `#121212` for comfort
 - Elevated surfaces at `#1e1e1e`
@@ -343,11 +343,11 @@ Triggered by `prefers-color-scheme: dark` via the `@media` rule in `static/style
 
 | File | What it contains |
 |------|-------------------|
-| `static/style.css` | Shared stylesheet — design tokens, component styles, dark mode |
+| `static/style.css` | Edit-source stylesheet — design tokens, component styles, dark mode (served minified as `style.min.css` with source map) |
+| `static/fonts.css` | Edit-source `@font-face` for Newsreader variable WOFF2 (served minified as `fonts.min.css` with source map) |
 | `templates/index.html` | Main form page — search, podcast ID, region/locale, subscriptions |
 | `templates/feed_location.html` | Result page — feed URL, copy button, QR code |
 | `templates/partials/feed_result.html` | Partial — feed URL, copy button (Alpine), QR code |
 | `templates/partials/search_results.html` | Partial — HTMX search results list |
 | `templates/partials/subscriptions.html` | Partial — HTMX subscriptions list |
-
-Both page templates link to `/static/fonts.css` and `/static/style.css` and load HTMX, Alpine.js, and QRCode.js from `/static/`. Partials are server-rendered snippets swapped into the DOM by HTMX.
+Both page templates link to `/static/fonts.min.css` and `/static/style.min.css` and load HTMX, Alpine.js, and QRCode.js from `/static/`. Partials are server-rendered snippets swapped into the DOM by HTMX.
