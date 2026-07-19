@@ -115,9 +115,14 @@ func main() {
 	}
 
 	var logLevel slog.LevelVar
-	if cfg.Debug {
+	switch cfg.LogLevel {
+	case "debug":
 		logLevel.Set(slog.LevelDebug)
-	} else {
+	case "warn", "warning":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default: // "info" and empty
 		logLevel.Set(slog.LevelInfo)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -254,14 +259,21 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 		a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", rec.status, "duration", time.Since(start).Seconds())
+		switch code := rec.status; {
+		case code >= 500:
+			a.logger.Error("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		case code >= 400:
+			a.logger.Warn("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		default:
+			a.logger.Info("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		}
 	})
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the response status
 // code for request logging. It delegates every WriteHeader call to the
 // underlying writer while recording the code. Handlers that never call
-// WriteHeader implicitly report 200 OK, which is the zero value.
+// WriteHeader implicitly report 200 OK, which is the initial value set at construction.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int

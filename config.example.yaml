@@ -42,5 +42,5 @@ token_cache_time: "432000s"   # 5 days
 podcast_cache_time: "21600s"  # 6 hours
 head_cache_time: "604800s"    # 7 days
 
-# Logging
-debug: false
+# Logging: slog level. One of debug, info, warn, warning, error.
+log_level: "info"

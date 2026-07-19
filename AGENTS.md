@@ -195,7 +195,7 @@ server := &http.Server{
 ```
 
 ### Request Logging
-Requests are logged at both start and completion with timing via a `chi` middleware. URLs are redacted to scrub embedded credentials:
+Requests are logged at both start and completion with timing via a `chi` middleware. URLs are redacted to scrub embedded credentials. The completion log is status-based so `log_level=warn`/`error` surfaces only problems: 5xx → `Error`, 4xx → `Warn`, 2xx/3xx → `Info`. The verbose start line stays at `Debug` (visible only at `log_level=debug`).
 
 ```go
 func (a *App) loggingMiddleware(next http.Handler) http.Handler {
@@ -204,7 +204,14 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
         a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
         rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
         next.ServeHTTP(rec, r)
-        a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", rec.status, "duration", time.Since(start).Seconds())
+        switch code := rec.status; {
+        case code >= 500:
+            a.logger.Error("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        case code >= 400:
+            a.logger.Warn("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        default:
+            a.logger.Info("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        }
     })
 }
 ```
@@ -275,12 +282,12 @@ PODIMO_HEAD_CACHE_TIME=604800
 In `config.yaml`:
 ```yaml
 local_credentials: true   # single-user mode
-debug: true                 # verbose logging
+log_level: "debug"          # verbose logging (debug/info/warn/warning/error)
 ```
 Or via environment variables (prefixed with `PODIMO_`):
 - `PODIMO_LOCAL_CREDENTIALS=true` — single-user mode, credentials stored server-side
 - `PODIMO_PUBLIC_FEEDS=true` — removes `<itunes:block>` from RSS
-- `PODIMO_DEBUG=true` — verbose `slog` logging at `LevelDebug`
+- `PODIMO_LOG_LEVEL=debug` — verbose `slog` logging (values: debug, info, warn, warning, error)
 
 ### Running locally
 ```bash
@@ -315,7 +322,7 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ✅ **FIXED** - No rate limiting (added per-IP limit: 8 req/10s)
 ✅ **FIXED** - CORS wildcard on all responses (removed)
 ✅ **FIXED** — Docker running as root with build deps (now multi-stage `golang:1.26-alpine` builder → `scratch` runtime with CA certs, nonroot UID 65532, and built-in `healthcheck` subcommand for `HEALTHCHECK`)
-✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)
+✅ **FIXED** — `DEBUG=true` in `.env.example` (replaced by `PODIMO_LOG_LEVEL`, commented out with security warning)
 ✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` types)
 ✅ **FIXED** — Logging only at request start (now logs both start and end with duration + status code)
 ✅ **FIXED** — No `/health` endpoint for Docker orchestration (added lightweight JSON health probe)
@@ -377,11 +384,11 @@ Example:
 ```yaml
 hostname: "myserver.example.com"
 bind_host: "0.0.0.0:12104"
-debug: true
+log_level: "debug"
 ```
 
 ### Env vars (override)
-All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` files are still supported via godotenv pre-load.
+All variables must use the `PODIMO_` prefix (e.g. `PODIMO_LOG_LEVEL=debug`). `.env` files are still supported via godotenv pre-load.
 
 ### CLI flag (custom file path)
 ```bash
@@ -390,7 +397,7 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 
 ### Precedence (highest first)
 1. `--config /path/to/config.yaml` (explicit CLI flag)
-2. Environment variables (`PODIMO_DEBUG=true`)
+2. Environment variables (`PODIMO_LOG_LEVEL=debug`)
 3. `config.yaml` in working dir or `/etc/podimo-rss/`
 4. `.env` file (pre-loaded into env vars)
 5. Hardcoded defaults
@@ -414,7 +421,7 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 | `PODIMO_HEAD_CACHE_TIME` / `head_cache_time` | `604800s` | HEAD response cache TTL |
 | `PODIMO_PUBLIC_FEEDS` / `public_feeds` | `false` | Remove `<itunes:block>` from RSS |
 | `PODIMO_DATE_FORMAT` / `date_format` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
-| `PODIMO_DEBUG` / `debug` | `false` | Verbose `slog` logging
+| `PODIMO_LOG_LEVEL` / `log_level` | `info` | `slog` level: debug, info, warn, warning, error |
 
 ## Security Notes for Agents
 

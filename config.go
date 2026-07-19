@@ -28,7 +28,7 @@ type Config struct {
 	ScraperAPI         string              `koanf:"scraper_api"`
 	CacheDir           string              `koanf:"cache_dir"`
 	BlockListFile      string              `koanf:"block_list_file"`
-	Debug              bool                `koanf:"debug"`
+	LogLevel           string              `koanf:"log_level"`
 	LocalCredentials   bool                `koanf:"local_credentials"`
 	Email              string              `koanf:"email"`
 	Password           string              `koanf:"password"`
@@ -64,7 +64,7 @@ func LoadConfig(configFile string) (*Config, error) {
 		"protocol":             "http",
 		"cache_dir":            "./cache",
 		"block_list_file":      "./.block-list",
-		"debug":                false,
+		"log_level":            "info",
 		"local_credentials":    false,
 		"graphql_url":          "https://podimo.com/graphql",
 		"store_tokens_on_disk": true,
@@ -156,6 +156,14 @@ func LoadConfig(configFile string) (*Config, error) {
 		return nil, fmt.Errorf("resolve cache dir: %w", err)
 	}
 	cfg.CacheDir = absDir
+
+	// Normalize and validate log level: accept debug/info/warn/warning/error.
+	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
+	switch cfg.LogLevel {
+	case "debug", "info", "warn", "warning", "error":
+	default:
+		return nil, fmt.Errorf("invalid log_level %q: must be one of debug, info, warn, warning, error", cfg.LogLevel)
+	}
 
 	if _, err := os.Stat(cfg.BlockListFile); err == nil {
 		f, err := os.Open(cfg.BlockListFile)
