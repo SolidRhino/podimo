@@ -168,7 +168,7 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 | `GET /` | Web interface (form + search) | — |
 | `GET /health` | JSON liveness probe for Docker `HEALTHCHECK` | — |
 | `GET /ready` | JSON readiness probe; checks Podimo API reachability (use for K8s readiness) | — |
-| `GET /search?q=...` | Search podcasts by name | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
+| `GET /search?q=...` | Search podcasts by name (HTMX partial; direct visit redirects to `/`) | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /subscriptions` | List followed podcasts (HTMX partial; direct visit redirects to `/`) | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /feed/<id>.xml` | RSS feed (credentials in URL) | Basic Auth |
 | `GET /feed/<user>/<pass>/<id>.xml` | RSS feed (credentials in path) | — |

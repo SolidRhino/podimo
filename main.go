@@ -413,6 +413,10 @@ func withAuthRetry[T any](ctx context.Context, client *podimo.PodimoClient, fn f
 }
 
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Query must be at least 2 characters"})
