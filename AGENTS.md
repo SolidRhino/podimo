@@ -344,7 +344,7 @@ Users no longer need to manually extract podcast IDs from Podimo URLs. The web U
 
 1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
-2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
+2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
 
 The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) - the UUID is extracted via client-side JavaScript regex.
 

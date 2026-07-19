@@ -452,6 +452,10 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	username, password, region, locale, ok := a.resolveCredentials(r, w)
 	if !ok {
 		return
