@@ -459,6 +459,130 @@ func TestHandleSubscriptions_ShowsMetadata(t *testing.T) {
 	}
 }
 
+func TestHandleSubscriptions_SortByCount(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Few", EpisodeCount: 5, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Many", EpisodeCount: 500, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "c", Title: "Mid", EpisodeCount: 50, LatestPublish: "2024-01-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=count", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Many (500) should appear before Mid (50) before Few (5).
+	idxMany := strings.Index(body, "Many")
+	idxMid := strings.Index(body, "Mid")
+	idxFew := strings.Index(body, "Few")
+	if idxMany < 0 || idxMid < 0 || idxFew < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxMany < idxMid && idxMid < idxFew) {
+		t.Fatalf("expected order Many→Mid→Few, got indices %d/%d/%d", idxMany, idxMid, idxFew)
+	}
+}
+
+func TestHandleSubscriptions_SortByTitle(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Zebra", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Apple", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "c", Title: "Mango", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=title", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	idxApple := strings.Index(body, "Apple")
+	idxMango := strings.Index(body, "Mango")
+	idxZebra := strings.Index(body, "Zebra")
+	if idxApple < 0 || idxMango < 0 || idxZebra < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxApple < idxMango && idxMango < idxZebra) {
+		t.Fatalf("expected order Apple→Mango→Zebra, got indices %d/%d/%d", idxApple, idxMango, idxZebra)
+	}
+}
+
+func TestHandleSubscriptions_SortByLatest(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Older", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Newer", EpisodeCount: 10, LatestPublish: "2024-06-01T00:00:00Z"},
+		{ID: "c", Title: "Newest", EpisodeCount: 10, LatestPublish: "2024-12-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	// Default sort (no param) should also be latest.
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=latest", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	idxNewest := strings.Index(body, "Newest")
+	idxNewer := strings.Index(body, "Newer")
+	idxOlder := strings.Index(body, "Older")
+	if idxNewest < 0 || idxNewer < 0 || idxOlder < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxNewest < idxNewer && idxNewer < idxOlder) {
+		t.Fatalf("expected order Newest→Newer→Older, got indices %d/%d/%d", idxNewest, idxNewer, idxOlder)
+	}
+}
+
+type mockPod struct {
+	ID            string
+	Title         string
+	EpisodeCount  float64
+	LatestPublish string
+}
+
+// multiPodMockServer returns a mock Podimo GraphQL server returning the
+// given followed podcasts.
+func multiPodMockServer(t *testing.T, pods []mockPod) *httptest.Server {
+	t.Helper()
+	followed := make([]interface{}, 0, len(pods))
+	for _, p := range pods {
+		followed = append(followed, map[string]interface{}{
+			"id":            p.ID,
+			"title":         p.Title,
+			"coverImageUrl": "http://cover.jpg",
+			"episodeCount":  p.EpisodeCount,
+			"latestEpisode": map[string]interface{}{
+				"publishDatetime": p.LatestPublish,
+			},
+		})
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{"podcastsFollowed": followed},
+		})
+	}))
+}
+
 func TestHandleFeed_AuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

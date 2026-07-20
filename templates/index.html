@@ -87,10 +87,18 @@
         <button type="button" class="btn-secondary"
                 aria-label="Load your Podimo subscriptions"
                 hx-get="/subscriptions" hx-target="#subscriptionsResults"
-                hx-include="[name='region'], [name='locale']" hx-trigger="click"
+                hx-include="[name='region'], [name='locale'], #subsSort" hx-trigger="click"
                 hx-indicator=".subs-loader">
           Show subscriptions
         </button>
+        <select id="subsSort" name="sort" aria-label="Sort subscriptions"
+                hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                hx-include="[name='region'], [name='locale'], #subsSort"
+                hx-trigger="change" hx-indicator=".subs-loader">
+          <option value="latest">Newest episode first</option>
+          <option value="count">Most episodes</option>
+          <option value="title">A–Z</option>
+        </select>
         <div id="subscriptionsResults" class="search-results" role="region" aria-live="polite" aria-label="Subscriptions"></div>
         <p class="htmx-indicator subs-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Loading subscriptions…</p>
       </div>

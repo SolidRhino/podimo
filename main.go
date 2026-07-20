@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -455,6 +456,44 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	a.renderPartial(w, "search_results.html", map[string]any{"Results": results, "Query": searchQuery})
 }
 
+// sortSubscriptions sorts the followed podcasts by the given mode.
+// Supported modes: "latest" (newest episode first, default), "count"
+// (most episodes first), "title" (A-Z case-insensitive). Unknown or
+// empty values default to "latest". Ties are broken by title for a
+// deterministic order regardless of Podimo's default sorting.
+func sortSubscriptions(podcasts []podimo.FollowedPodcast, mode string) {
+	switch mode {
+	case "count":
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			if podcasts[i].EpisodeCount != podcasts[j].EpisodeCount {
+				return podcasts[i].EpisodeCount > podcasts[j].EpisodeCount
+			}
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	case "title":
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	default: // "latest" and empty
+		parseTime := func(s string) time.Time {
+			if s == "" {
+				return time.Time{}
+			}
+			if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+				return t
+			}
+			return time.Time{}
+		}
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			ti, tj := parseTime(podcasts[i].LatestEpisode.PublishDatetime), parseTime(podcasts[j].LatestEpisode.PublishDatetime)
+			if !ti.Equal(tj) {
+				return ti.After(tj)
+			}
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	}
+}
+
 func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("HX-Request") != "true" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -490,7 +529,9 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results})
+	sortSubscriptions(results, r.URL.Query().Get("sort"))
+
+	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results, "Sort": r.URL.Query().Get("sort")})
 }
 
 func (a *App) handleSubscriptionsOPML(w http.ResponseWriter, r *http.Request) {

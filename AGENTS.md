@@ -344,7 +344,7 @@ Users no longer need to manually extract podcast IDs from Podimo URLs. The web U
 
 1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
-2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
+2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`). Results are sortable via a `sort` query parameter (`latest` [default], `count`, `title`); the sort is applied server-side in `sortSubscriptions` with deterministic title tie-breaking, and `latest` parses `time.RFC3339Nano` timestamps for correct chronological ordering. The UI exposes the sort via an HTMX `<select>` that re-fetches the partial on change.
 
 The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) - the UUID is extracted via client-side JavaScript regex.
 
@@ -354,7 +354,7 @@ There is now a **Go test suite** with 6 test files:
 
 | File | Coverage |
 |------|----------|
-| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/ready` (reachable/unreachable/cached), `/search` 200, `/subscriptions` 200 + metadata rendering, `/subscriptions.opml`, feed ETag/304/Cache-Control/Last-Modified, `withAuthRetry`, `statusRecorder` logging, `feedURLFor`, rate limiter behavior, 404, 400 for invalid UUID |
+| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/ready` (reachable/unreachable/cached), `/search` 200, `/subscriptions` 200 + metadata rendering + sort (latest/count/title), `/subscriptions.opml`, feed ETag/304/Cache-Control/Last-Modified, `withAuthRetry`, `statusRecorder` logging, `feedURLFor`, rate limiter behavior, 404, 400 for invalid UUID |
 | `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling, `GetPodcasts` pagination dedup + page cap, `GetFollowedPodcasts` extended + minimal fallback |
 | `podimo/graphql_test.go` | `GraphQLClient.Query` status-code handling, structured `GQLError` extraction, 10 MB limit |
 | `podimo/rss_test.go` | `PodcastsToRss` XML output, `ExtractAudioURL`, `URLHeadInfo`, content-type logic, `chunks` |
