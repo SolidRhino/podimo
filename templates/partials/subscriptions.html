@@ -4,7 +4,7 @@
 <em class="search-msg">No subscriptions found.</em>
 {{ else }}
 <div class="subs-summary">
-  <span class="toolbar-count">{{ .Total }} podcasts</span>
+  <span class="toolbar-count">{{ .Total }} podcast{{ if ne .Total 1 }}s{{ end }}</span>
 </div>
 <ul class="subs-list">
   {{ range .Results }}
@@ -15,14 +15,14 @@
     <div class="sub-meta">
       <strong>{{ .Title }}</strong>
       {{ if .EpisodeCount }}
-      <br><small>{{ printf "%.0f" .EpisodeCount }} episodes{{ if .LatestEpisode.PublishDatetime }} · updated {{ formatDate .LatestEpisode.PublishDatetime }}{{ end }}</small>
+      <br><small>{{ printf "%.0f" .EpisodeCount }} episode{{ if ne .EpisodeCount 1.0 }}s{{ end }}{{ if .LatestEpisode.PublishDatetime }} · updated {{ formatDate .LatestEpisode.PublishDatetime }}{{ end }}</small>
       {{ end }}
     </div>
   </li>
   {{ end }}
 </ul>
 <nav class="subs-pagination" aria-label="Subscription pages">
-  <span class="subs-page-info">Page <strong>{{ .Page }}</strong> / {{ .TotalPages }} ({{ .Total }} podcasts)</span>
+  <span class="subs-page-info">Page <strong>{{ .Page }}</strong> / {{ .TotalPages }} ({{ .Total }} podcast{{ if ne .Total 1 }}s{{ end }})</span>
   <div class="subs-pagination-controls"
        hx-target="#subscriptionsResults"
        hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"

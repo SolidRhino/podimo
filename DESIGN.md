@@ -350,4 +350,5 @@ Triggered by `prefers-color-scheme: dark` via the `@media` rule in `static/style
 | `templates/partials/feed_result.html` | Partial — feed URL, copy button (Alpine), QR code |
 | `templates/partials/search_results.html` | Partial — HTMX search results list |
 | `templates/partials/subscriptions.html` | Partial — HTMX subscriptions list |
+
 Both page templates link to `/static/fonts.min.css` and `/static/style.min.css` and load HTMX, Alpine.js, and QRCode.js from `/static/`. Partials are server-rendered snippets swapped into the DOM by HTMX.

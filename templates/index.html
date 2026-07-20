@@ -190,11 +190,15 @@
     (function () {
       var results = document.getElementById('subscriptionsResults');
       if (!results) { return; }
+      var initialFired = false;
       function fireIfReady() {
         var email = document.getElementById('email');
         var password = document.getElementById('password');
         if (email && password && email.value && password.value) {
-          htmx.trigger(results, 'credentials-ready');
+          if (!initialFired) {
+            initialFired = true;
+            htmx.trigger(results, 'credentials-ready');
+          }
         }
       }
       ['change', 'blur'].forEach(function (ev) {
