@@ -45,6 +45,8 @@ func setupTestApp(t *testing.T) *App {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""
@@ -551,6 +553,101 @@ func TestHandleSubscriptions_SortByLatest(t *testing.T) {
 	}
 }
 
+// manyPods builds n mockPod entries with distinct titles and descending
+// episode counts so the "count" sort is stable and predictable.
+func manyPods(n int) []mockPod {
+	pods := make([]mockPod, 0, n)
+	for i := 0; i < n; i++ {
+		pods = append(pods, mockPod{
+			ID:            fmt.Sprintf("id-%d", i),
+			Title:         fmt.Sprintf("Pod %02d", i),
+			EpisodeCount:  float64(n - i),
+			LatestPublish: "2024-01-01T00:00:00Z",
+		})
+	}
+	return pods
+}
+
+func TestHandleSubscriptions_Pagination(t *testing.T) {
+	srv := multiPodMockServer(t, manyPods(25))
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=10&page=2", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Page 2 (1-based) of 25 items at per_page=10 covers items 11..20.
+	// Count the <li> elements rendered in the response.
+	itemCount := strings.Count(body, "<li")
+	if itemCount != 10 {
+		t.Fatalf("expected 10 items on page 2, got %d: %s", itemCount, body)
+	}
+	if !strings.Contains(body, "2 / 3 (25 podcasts)") {
+		t.Fatalf("expected page info '2 / 3 (25 podcasts)', got: %s", body)
+	}
+	if !strings.Contains(body, "‹ Prev") {
+		t.Fatalf("expected Prev button on page 2: %s", body)
+	}
+	if !strings.Contains(body, "Next ›") {
+		t.Fatalf("expected Next button on page 2 of 3: %s", body)
+	}
+	// Page 2 should not contain Pod 00 (page 1) or Pod 24 (page 3).
+	if strings.Contains(body, "Pod 00") {
+		t.Fatalf("page 2 should not contain Pod 00: %s", body)
+	}
+	if strings.Contains(body, "Pod 24") {
+		t.Fatalf("page 2 should not contain Pod 24: %s", body)
+	}
+}
+
+func TestHandleSubscriptions_PerPageClamping(t *testing.T) {
+	// Low clamp: per_page=1 falls below the minimum (5) and clamps to the
+	// default (10). With 25 podcasts the first page renders 10 items.
+	srv := multiPodMockServer(t, manyPods(25))
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=1", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := strings.Count(rr.Body.String(), "<li"); got != 10 {
+		t.Fatalf("per_page=1 should clamp to 10 items, got %d", got)
+	}
+
+	// High clamp: per_page=100 exceeds the maximum (50) and clamps to 50.
+	// With 60 total podcasts the first page renders exactly 50 items; 25
+	// would pass even if the clamp were broken, so we use 60 to prove the cap.
+	srvHigh := multiPodMockServer(t, manyPods(60))
+	t.Cleanup(srvHigh.Close)
+	appHigh := feedTestApp(t, srvHigh)
+	routerHigh := appHigh.setupRoutes()
+	req2 := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=100", nil)
+	req2.Header.Set("HX-Request", "true")
+	rr2 := httptest.NewRecorder()
+	routerHigh.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if got := strings.Count(rr2.Body.String(), "<li"); got != 50 {
+		t.Fatalf("per_page=100 should clamp to 50 items, got %d", got)
+	}
+	if !strings.Contains(rr2.Body.String(), "1 / 2 (60 podcasts)") {
+		t.Fatalf("expected page info '1 / 2 (60 podcasts)', got: %s", rr2.Body.String())
+	}
+}
+
 type mockPod struct {
 	ID            string
 	Title         string
@@ -844,6 +941,8 @@ func TestHandleSubscriptions_FormatsDate(t *testing.T) {
 	app.cfg.DateFormat = "Jan 2, 2006"
 	// Re-parse templates with the new format's FuncMap.
 	app.templates = template.Must(template.New("").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""

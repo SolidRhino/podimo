@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -140,6 +141,8 @@ func main() {
 	}))
 
 	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""
@@ -531,7 +534,43 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 	sortSubscriptions(results, r.URL.Query().Get("sort"))
 
-	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results, "Sort": r.URL.Query().Get("sort")})
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	switch {
+	case perPage < 5:
+		perPage = 10
+	case perPage > 50:
+		perPage = 50
+	}
+	total := len(results)
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	if start > total {
+		start = total
+	}
+	paged := results[start:end]
+
+	a.renderPartial(w, "subscriptions.html", map[string]any{
+		"Results":    paged,
+		"Sort":       r.URL.Query().Get("sort"),
+		"Page":       page,
+		"PerPage":    perPage,
+		"Total":      total,
+		"TotalPages": totalPages,
+	})
 }
 
 func (a *App) handleSubscriptionsOPML(w http.ResponseWriter, r *http.Request) {

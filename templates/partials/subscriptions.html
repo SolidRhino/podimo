@@ -18,4 +18,22 @@
   </li>
   {{ end }}
 </ul>
+<div class="subs-pagination">
+  <span class="subs-page-info">{{ .Page }} / {{ .TotalPages }} ({{ .Total }} podcasts)</span>
+  <div class="subs-pagination-controls"
+       hx-target="#subscriptionsResults"
+       hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+       hx-indicator=".subs-loader">
+    {{ if gt .Page 1 }}
+    <button type="button" class="btn-secondary btn-sm"
+            hx-get="/subscriptions?page={{ sub .Page 1 }}&per_page={{ .PerPage }}&sort={{ .Sort }}"
+            hx-trigger="click">‹ Prev</button>
+    {{ end }}
+    {{ if lt .Page .TotalPages }}
+    <button type="button" class="btn-secondary btn-sm"
+            hx-get="/subscriptions?page={{ add .Page 1 }}&per_page={{ .PerPage }}&sort={{ .Sort }}"
+            hx-trigger="click">Next ›</button>
+    {{ end }}
+  </div>
+</div>
 {{ end }}

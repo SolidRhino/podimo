@@ -84,22 +84,30 @@
     <div class="form-section">
       <h2>📻 Your Subscriptions</h2>
       <div class="field-group">
-        <button type="button" class="btn-secondary"
-                aria-label="Load your Podimo subscriptions"
-                hx-get="/subscriptions" hx-target="#subscriptionsResults"
-                hx-include="[name='region'], [name='locale'], #subsSort" hx-trigger="click"
-                hx-indicator=".subs-loader">
-          Show subscriptions
-        </button>
         <select id="subsSort" name="sort" aria-label="Sort subscriptions"
+                {{ if not .NeedCredentials }}
                 hx-get="/subscriptions" hx-target="#subscriptionsResults"
-                hx-include="[name='region'], [name='locale'], #subsSort"
-                hx-trigger="change" hx-indicator=".subs-loader">
+                hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+                hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
           <option value="latest">Newest episode first</option>
           <option value="count">Most episodes</option>
           <option value="title">A–Z</option>
         </select>
-        <div id="subscriptionsResults" class="search-results" role="region" aria-live="polite" aria-label="Subscriptions"></div>
+        <select id="subsPerPage" name="per_page" aria-label="Items per page"
+                {{ if not .NeedCredentials }}
+                hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+                hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
+          <option value="10" selected>10 per page</option>
+          <option value="20">20 per page</option>
+          <option value="50">50 per page</option>
+        </select>
+        <div id="subscriptionsResults" class="search-results"
+             role="region" aria-live="polite" aria-label="Subscriptions"
+             hx-get="/subscriptions" hx-target="this"
+             hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+             {{ if .NeedCredentials }}hx-trigger="credentials-ready"{{ else }}hx-trigger="load"{{ end }} hx-indicator=".subs-loader">
+        </div>
         <p class="htmx-indicator subs-loader" aria-hidden="true"><span class="spinner" aria-hidden="true"></span>Loading subscriptions…</p>
       </div>
     </div>
@@ -162,8 +170,31 @@
         evt.detail.headers['Authorization'] = 'Basic ' + btoa(userPart + ':' + password.value);
       }
     });
-{{ end }}
 
+    // Load subscriptions once the user has filled both credentials. Uses
+    // change/blur (not every keystroke) so partial passwords don't trigger
+    // premature auth attempts, plus a one-time delayed check for
+    // browser-managed autofill that arrives after load without firing
+    // input events.
+    (function () {
+      var results = document.getElementById('subscriptionsResults');
+      if (!results) { return; }
+      function fireIfReady() {
+        var email = document.getElementById('email');
+        var password = document.getElementById('password');
+        if (email && password && email.value && password.value) {
+          htmx.trigger(results, 'credentials-ready');
+        }
+      }
+      ['change', 'blur'].forEach(function (ev) {
+        ['email', 'password', 'subsSort', 'subsPerPage'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) { el.addEventListener(ev, fireIfReady); }
+        });
+      });
+      setTimeout(fireIfReady, 500);
+    })();
+{{ end }}
     window.selectPodcast = function(id) {
       document.getElementById('podcast_id').value = id;
       document.getElementById('searchResults').innerHTML = '';
