@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Responsive breakpoints (768px, 480px) with iOS zoom prevention and mobile-first button layouts.
 - Dark mode contrast improvements: elevated surfaces, focus rings, error background readability.
 - Reduced-motion support (`prefers-reduced-motion`).
-- Self-hosted Newsreader font (TTF + `@font-face` in `fonts.css`).
+- Self-hosted Newsreader variable font (WOFF2 + `@font-face` in `fonts.css`); CSS minified with source maps.
 
 ### Changed
 - All CDN dependencies removed — HTMX, Alpine.js, QRCode.js, and Newsreader font are self-hosted under `/static/`.

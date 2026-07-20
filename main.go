@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"html"
 	"html/template"
 	"log/slog"
 	"net"
@@ -15,6 +19,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,6 +55,7 @@ type App struct {
 	headCache    *podimo.FileCache
 	clients      *podimo.BoundedMap[string, *http.Client]
 	logLevel     *slog.LevelVar
+	ready        *readyProbe
 }
 
 type RateLimiter struct {
@@ -110,9 +117,14 @@ func main() {
 	}
 
 	var logLevel slog.LevelVar
-	if cfg.Debug {
+	switch cfg.LogLevel {
+	case "debug":
 		logLevel.Set(slog.LevelDebug)
-	} else {
+	case "warn", "warning":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default: // "info" and empty
 		logLevel.Set(slog.LevelInfo)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -128,7 +140,20 @@ func main() {
 		},
 	}))
 
-	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
 		logger.Error("Failed to parse templates", "error", err)
 		os.Exit(1)
@@ -172,6 +197,7 @@ func main() {
 			},
 		}),
 	}
+	app.ready = &readyProbe{endpoint: app.graphqlEndpoint()}
 
 	router := app.setupRoutes()
 
@@ -221,8 +247,10 @@ func (a *App) setupRoutes() chi.Router {
 	r.Handle("/static/*", http.FileServer(http.FS(staticFS)))
 
 	r.Get("/health", a.handleHealth)
+	r.Get("/ready", a.handleReady)
 	r.With(a.rateLimitMiddleware).Get("/search", a.handleSearch)
 	r.With(a.rateLimitMiddleware).Get("/subscriptions", a.handleSubscriptions)
+	r.With(a.rateLimitMiddleware).Get("/subscriptions.opml", a.handleSubscriptionsOPML)
 	r.Get("/", a.handleIndex)
 	r.Post("/", a.handleIndex)
 	r.With(a.rateLimitMiddleware).Get("/feed/{podcast_id}.xml", a.handleFeed)
@@ -234,9 +262,31 @@ func (a *App) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
-		next.ServeHTTP(w, r)
-		a.logger.Debug("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		switch code := rec.status; {
+		case code >= 500:
+			a.logger.Error("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		case code >= 400:
+			a.logger.Warn("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		default:
+			a.logger.Info("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+		}
 	})
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the response status
+// code for request logging. It delegates every WriteHeader call to the
+// underlying writer while recording the code. Handlers that never call
+// WriteHeader implicitly report 200 OK, which is the initial value set at construction.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
 func (a *App) clientIP(r *http.Request) string {
@@ -271,6 +321,54 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
 }
 
+// readyProbe checks outbound reachability of the Podimo GraphQL endpoint.
+// It caches the result for 10 seconds so orchestration probes polling /ready
+// do not generate a request per probe. Any HTTP response (even 405/404)
+// proves reachability; only connection failures or timeouts mark it unready.
+type readyProbe struct {
+	endpoint string
+	mu       sync.Mutex
+	ok       bool
+	checked  time.Time
+}
+
+func (rp *readyProbe) check(ctx context.Context) bool {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	if time.Since(rp.checked) < 10*time.Second {
+		return rp.ok
+	}
+	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx2, http.MethodGet, rp.endpoint, nil)
+	if err != nil {
+		rp.ok = false
+		rp.checked = time.Now()
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		rp.ok = false
+		rp.checked = time.Now()
+		return false
+	}
+	_ = resp.Body.Close()
+	rp.ok = true
+	rp.checked = time.Now()
+	return true
+}
+
+func (a *App) handleReady(w http.ResponseWriter, r *http.Request) {
+	if a.ready == nil || !a.ready.check(r.Context()) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"not ready","service":"podimo-rss"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"status":"ready","service":"podimo-rss"}`))
+}
+
 // runHealthcheck probes the local /health endpoint. Returns 0 on HTTP 200, 1
 // otherwise. It reads PODIMO_BIND_HOST (the same env var the server uses),
 // defaults to 127.0.0.1:12104, and normalizes wildcard bind hosts (0.0.0.0,
@@ -300,7 +398,30 @@ func runHealthcheck() int {
 	return 0
 }
 
+// withAuthRetry runs fn against the Podimo client. If fn returns an
+// *AuthenticationError, it refreshes the token once and retries. Returns the
+// final error (nil if the retry succeeded). The downstream caller is still
+// responsible for type-asserting the returned error for status-specific
+// handling (e.g. PodcastNotFoundError, AuthenticationError).
+func withAuthRetry[T any](ctx context.Context, client *podimo.PodimoClient, fn func(context.Context) (T, error)) (T, error) {
+	v, err := fn(ctx)
+	if _, ok := err.(*podimo.AuthenticationError); ok {
+		if refreshErr := client.RefreshToken(ctx); refreshErr == nil {
+			v, err = fn(ctx)
+		}
+	}
+	var zero T
+	if err != nil {
+		return zero, err
+	}
+	return v, nil
+}
+
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	searchQuery := r.URL.Query().Get("q")
 	if len(searchQuery) < 2 {
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Query must be at least 2 characters"})
@@ -327,12 +448,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Authentication required"})
 		return
 	}
-	results, err := client.SearchPodcasts(r.Context(), searchQuery)
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			results, err = client.SearchPodcasts(r.Context(), searchQuery)
-		}
-	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.SearchResult, error) {
+		return client.SearchPodcasts(ctx, searchQuery)
+	})
 	if err != nil {
 		a.logger.Error("Search error", "error", err)
 		a.renderPartial(w, "search_results.html", map[string]any{"Error": "Search failed. Podimo may have changed their API."})
@@ -342,7 +460,112 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	a.renderPartial(w, "search_results.html", map[string]any{"Results": results, "Query": searchQuery})
 }
 
+// PageButton is a single entry in the pagination control: either a
+// numbered page button (Ellipsis=false) or an ellipsis gap marker
+// (Ellipsis=true, Number is 0).
+type PageButton struct {
+	Number   int
+	Ellipsis bool
+}
+
+// paginationPages returns the page buttons to render for a pagination
+// control with the given current page (1-based) and total page count.
+// It always shows the first three and last three pages (edge windows),
+// the current page and its immediate neighbors, and inserts an ellipsis
+// wherever consecutive shown pages have a gap > 1. For totals up to 7
+// pages every page is shown with no ellipsis.
+func paginationPages(page, total int) []PageButton {
+	if total <= 0 {
+		total = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > total {
+		page = total
+	}
+	if total <= 7 {
+		buttons := make([]PageButton, 0, total)
+		for i := 1; i <= total; i++ {
+			buttons = append(buttons, PageButton{Number: i})
+		}
+		return buttons
+	}
+	// Collect the pages to show: first/last, current ± neighbors, edge windows.
+	pages := map[int]struct{}{1: {}, total: {}, page: {}}
+	if page > 1 {
+		pages[page-1] = struct{}{}
+	}
+	if page < total {
+		pages[page+1] = struct{}{}
+	}
+	for _, p := range []int{2, 3, total - 2, total - 1} {
+		if p > 0 && p <= total {
+			pages[p] = struct{}{}
+		}
+	}
+	// Sort the shown pages.
+	sorted := make([]int, 0, len(pages))
+	for p := range pages {
+		sorted = append(sorted, p)
+	}
+	sort.Ints(sorted)
+	// Build buttons, inserting an ellipsis wherever the gap > 1.
+	buttons := make([]PageButton, 0, len(sorted)+2)
+	prev := 0
+	for _, p := range sorted {
+		if prev > 0 && p-prev > 1 {
+			buttons = append(buttons, PageButton{Ellipsis: true})
+		}
+		buttons = append(buttons, PageButton{Number: p})
+		prev = p
+	}
+	return buttons
+}
+
+// sortSubscriptions sorts the followed podcasts by the given mode.
+// Supported modes: "latest" (newest episode first, default), "count"
+// (most episodes first), "title" (A-Z case-insensitive). Unknown or
+// empty values default to "latest". Ties are broken by title for a
+// deterministic order regardless of Podimo's default sorting.
+func sortSubscriptions(podcasts []podimo.FollowedPodcast, mode string) {
+	switch mode {
+	case "count":
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			if podcasts[i].EpisodeCount != podcasts[j].EpisodeCount {
+				return podcasts[i].EpisodeCount > podcasts[j].EpisodeCount
+			}
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	case "title":
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	default: // "latest" and empty
+		parseTime := func(s string) time.Time {
+			if s == "" {
+				return time.Time{}
+			}
+			if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+				return t
+			}
+			return time.Time{}
+		}
+		sort.SliceStable(podcasts, func(i, j int) bool {
+			ti, tj := parseTime(podcasts[i].LatestEpisode.PublishDatetime), parseTime(podcasts[j].LatestEpisode.PublishDatetime)
+			if !ti.Equal(tj) {
+				return ti.After(tj)
+			}
+			return strings.ToLower(podcasts[i].Title) < strings.ToLower(podcasts[j].Title)
+		})
+	}
+}
+
 func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	username, password, region, locale, ok := a.resolveCredentials(r, w)
 	if !ok {
 		return
@@ -364,19 +587,96 @@ func (a *App) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := client.GetFollowedPodcasts(r.Context())
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			results, err = client.GetFollowedPodcasts(r.Context())
-		}
-	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.FollowedPodcast, error) {
+		return client.GetFollowedPodcasts(ctx)
+	})
 	if err != nil {
 		a.logger.Error("Subscriptions error", "error", err)
 		a.renderPartial(w, "subscriptions.html", map[string]any{"Error": "Failed to fetch subscriptions"})
 		return
 	}
 
-	a.renderPartial(w, "subscriptions.html", map[string]any{"Results": results})
+	sortSubscriptions(results, r.URL.Query().Get("sort"))
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	switch {
+	case perPage < 5:
+		perPage = 10
+	case perPage > 50:
+		perPage = 50
+	}
+	total := len(results)
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * perPage
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	if start > total {
+		start = total
+	}
+	paged := results[start:end]
+
+	a.renderPartial(w, "subscriptions.html", map[string]any{
+		"Results":    paged,
+		"Sort":       r.URL.Query().Get("sort"),
+		"Page":       page,
+		"PerPage":    perPage,
+		"Total":      total,
+		"TotalPages": totalPages,
+	})
+}
+
+func (a *App) handleSubscriptionsOPML(w http.ResponseWriter, r *http.Request) {
+	username, password, region, locale, ok := a.resolveCredentials(r, w)
+	if !ok {
+		return
+	}
+	if !a.cfg.isValidRegion(region) {
+		http.Error(w, "Invalid region", http.StatusBadRequest)
+		return
+	}
+	if !a.cfg.isValidLocale(locale) {
+		http.Error(w, "Invalid locale", http.StatusBadRequest)
+		return
+	}
+	client, err := a.checkAuth(r.Context(), username, password, region, locale)
+	if err != nil {
+		a.logger.Error("OPML auth failed", "error", err)
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	results, err := withAuthRetry(r.Context(), client, func(ctx context.Context) ([]podimo.FollowedPodcast, error) {
+		return client.GetFollowedPodcasts(ctx)
+	})
+	if err != nil {
+		a.logger.Error("OPML fetch error", "error", err)
+		http.Error(w, "Failed to fetch subscriptions", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="podimo-subscriptions.opml"`)
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	buf.WriteString(`<opml version="2.0"><head><title>Podimo Subscriptions</title></head><body>` + "\n")
+	for _, p := range results {
+		feedURL := a.feedURLFor(p.ID, username, password, region, locale)
+		fmt.Fprintf(&buf, `  <outline type="rss" text="%s" title="%s" xmlUrl="%s" />`+"\n",
+			html.EscapeString(p.Title), html.EscapeString(p.Title), html.EscapeString(feedURL))
+	}
+	buf.WriteString(`</body></opml>` + "\n")
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (a *App) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -447,6 +747,40 @@ func (a *App) defaultRegionLocale(r *http.Request) (region, locale string) {
 	return region, locale
 }
 
+// feedLastModifiedTime returns the UTC publish time of the newest episode by
+// parsing each episode's PublishDatetime (RFC3339). Returns ok=false if no
+// episode has a parseable publish date.
+func feedLastModifiedTime(data *podimo.PodcastData) (time.Time, bool) {
+	var latest time.Time
+	found := false
+	for _, ep := range data.Episodes {
+		if t, err := time.Parse(time.RFC3339, ep.PublishDatetime); err == nil {
+			if !found || t.After(latest) {
+				latest = t
+				found = true
+			}
+		}
+	}
+	return latest, found
+}
+
+// feedETag returns a strong ETag derived from the content-determining fields of
+// the feed: podcast ID, title, author, episode count, newest publish date, and
+// the public-feeds flag (which changes whether <itunes:block> is emitted). The
+// 16-hex truncation is sufficient for collision resistance over a single
+// feed's lifetime.
+func feedETag(podcastID string, data *podimo.PodcastData, publicFeeds bool) string {
+	var latest string
+	for _, ep := range data.Episodes {
+		if ep.PublishDatetime > latest {
+			latest = ep.PublishDatetime
+		}
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s|%s|%s|%d|%s|%t", podcastID, data.Podcast.Title, data.Podcast.AuthorName, len(data.Episodes), latest, publicFeeds)
+	return `"` + hex.EncodeToString(h.Sum(nil))[:16] + `"`
+}
+
 // serveFeed handles the shared tail of handleFeed/handleFeedPath: block-list check,
 // auth, episode fetch (with one stale-token refresh retry), and RSS generation.
 func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, username, password, region, locale string) {
@@ -471,12 +805,9 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 		return
 	}
 
-	data, err := client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-	if _, ok := err.(*podimo.AuthenticationError); ok {
-		if refreshErr := client.RefreshToken(r.Context()); refreshErr == nil {
-			data, err = client.GetPodcasts(r.Context(), podcastID, a.cfg.PodcastCacheTime)
-		}
-	}
+	data, err := withAuthRetry(r.Context(), client, func(ctx context.Context) (*podimo.PodcastData, error) {
+		return client.GetPodcasts(ctx, podcastID, a.cfg.PodcastCacheTime)
+	})
 	if err != nil {
 		if _, ok := err.(*podimo.PodcastNotFoundError); ok {
 			http.Error(w, "Podcast not found. Are you sure you have the correct ID?", http.StatusNotFound)
@@ -489,6 +820,33 @@ func (a *App) serveFeed(w http.ResponseWriter, r *http.Request, podcastID, usern
 		a.logger.Error("Podcast fetch error", "error", err)
 		http.Error(w, "Something went wrong while fetching the podcasts", http.StatusInternalServerError)
 		return
+	}
+
+	// Conditional GET: emit ETag/Last-Modified and short-circuit 304 when the
+	// client's cached representation is still current. Cache-Control allows
+	// shared proxies to cache (the feed URL already carries credentials, so a
+	// 304 carries no extra secret). Last-Modified is truncated to second
+	// granularity to match HTTP date precision and avoid fractional-second
+	// mismatches between RFC3339 publish times and the If-Modified-Since header.
+	etag := feedETag(podcastID, data, a.cfg.PublicFeeds)
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	var lmTime time.Time
+	if t, ok := feedLastModifiedTime(data); ok {
+		lmTime = t.UTC().Truncate(time.Second)
+		w.Header().Set("Last-Modified", lmTime.Format(http.TimeFormat))
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if !lmTime.IsZero() {
+		if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+			if t, err := http.ParseTime(ims); err == nil && !lmTime.After(t) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
 	}
 
 	httpClient := a.getHTTPClient(client.Key())
@@ -592,16 +950,9 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var feedURL string
-		if a.cfg.LocalCredentials {
-			feedURL = a.buildFeedURL(podcastID, region, locale)
-		} else {
-			email := r.FormValue("email")
-			password := r.FormValue("password")
-			userPart := fmt.Sprintf("%s,%s,%s", email, region, locale)
-			feedURL = fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
-				a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
-		}
+		email := r.FormValue("email")
+		password := r.FormValue("password")
+		feedURL := a.feedURLFor(podcastID, email, password, region, locale)
 		a.renderFeedLocation(w, feedURL)
 		return
 	}
@@ -667,6 +1018,19 @@ func splitUsernameRegionLocale(user string) (username, region, locale string) {
 		return "", "nl", "nl-NL"
 	}
 	return parts[0], parts[1], parts[2]
+}
+
+// feedURLFor builds the feed URL for a podcast. In LocalCredentials mode it
+// delegates to buildFeedURL (no embedded credentials). Otherwise it embeds
+// the username, region, and locale as a comma-separated Basic Auth user,
+// plus the password, matching the format podcast apps expect.
+func (a *App) feedURLFor(podcastID, username, password, region, locale string) string {
+	if a.cfg.LocalCredentials {
+		return a.buildFeedURL(podcastID, region, locale)
+	}
+	userPart := fmt.Sprintf("%s,%s,%s", username, region, locale)
+	return fmt.Sprintf("%s://%s@%s/feed/%s.xml?random=%s",
+		a.cfg.Protocol, url.UserPassword(userPart, password).String(), a.cfg.Hostname, podcastID, podimo.RandomHexID(8))
 }
 
 func exampleText() string {

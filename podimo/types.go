@@ -51,7 +51,17 @@ type SearchResult struct {
 
 // FollowedPodcast represents a single entry from podcastsFollowed.
 type FollowedPodcast struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	CoverImageURL string `json:"coverImageUrl"`
+	ID            string        `json:"id"`
+	Title         string        `json:"title"`
+	CoverImageURL string        `json:"coverImageUrl"`
+	EpisodeCount  float64       `json:"episodeCount"`
+	LatestEpisode latestEpisode `json:"latestEpisode"`
+}
+
+// latestEpisode is the nested object Podimo returns on podcastsFollowed;
+// we only need the publish date, so only that field is decoded.
+type latestEpisode struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	PublishDatetime string `json:"publishDatetime"`
 }

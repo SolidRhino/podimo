@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -11,7 +13,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,11 +40,25 @@ func setupTestApp(t *testing.T) *App {
 		PodcastCacheTime:  time.Hour,
 		HeadCacheTime:     time.Hour,
 		StoreTokensOnDisk: true,
+		DateFormat:        "2006-01-02",
+		LogLevel:          "info",
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	tmpl, err := template.ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
+	tmpl, err := template.New("").Funcs(template.FuncMap{
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html")
 	if err != nil {
 		t.Fatalf("parse templates: %v", err)
 	}
@@ -170,6 +188,7 @@ func TestRateLimiting(t *testing.T) {
 	router := app.setupRoutes()
 	for i := 0; i < 9; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+		req.Header.Set("HX-Request", "true")
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
 		if i == 8 && rr.Code != http.StatusTooManyRequests {
@@ -347,6 +366,7 @@ func TestHandleSearch(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -384,6 +404,7 @@ func TestHandleSubscriptions(t *testing.T) {
 
 	router := app.setupRoutes()
 	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -394,6 +415,324 @@ func TestHandleSubscriptions(t *testing.T) {
 	if !strings.Contains(body, "Followed Podcast") {
 		t.Fatalf("expected HTML containing 'Followed Podcast', got: %s", body)
 	}
+}
+
+func TestHandleSubscriptions_ShowsMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":            "p1",
+						"title":         "Metadata Show",
+						"coverImageUrl": "http://cover.jpg",
+						"episodeCount":  12,
+						"latestEpisode": map[string]interface{}{
+							"publishDatetime": "2024-05-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "12 episodes") {
+		t.Fatalf("expected '12 episodes' in HTML, got: %s", body)
+	}
+	if !strings.Contains(body, "updated 2024-05-01") {
+		t.Fatalf("expected 'updated 2024-05-01' in HTML, got: %s", body)
+	}
+}
+
+func TestHandleSubscriptions_SortByCount(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Few", EpisodeCount: 5, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Many", EpisodeCount: 500, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "c", Title: "Mid", EpisodeCount: 50, LatestPublish: "2024-01-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=count", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Many (500) should appear before Mid (50) before Few (5).
+	idxMany := strings.Index(body, "Many")
+	idxMid := strings.Index(body, "Mid")
+	idxFew := strings.Index(body, "Few")
+	if idxMany < 0 || idxMid < 0 || idxFew < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxMany < idxMid && idxMid < idxFew) {
+		t.Fatalf("expected order Many→Mid→Few, got indices %d/%d/%d", idxMany, idxMid, idxFew)
+	}
+}
+
+func TestHandleSubscriptions_SortByTitle(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Zebra", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Apple", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "c", Title: "Mango", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=title", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	idxApple := strings.Index(body, "Apple")
+	idxMango := strings.Index(body, "Mango")
+	idxZebra := strings.Index(body, "Zebra")
+	if idxApple < 0 || idxMango < 0 || idxZebra < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxApple < idxMango && idxMango < idxZebra) {
+		t.Fatalf("expected order Apple→Mango→Zebra, got indices %d/%d/%d", idxApple, idxMango, idxZebra)
+	}
+}
+
+func TestHandleSubscriptions_SortByLatest(t *testing.T) {
+	srv := multiPodMockServer(t, []mockPod{
+		{ID: "a", Title: "Older", EpisodeCount: 10, LatestPublish: "2024-01-01T00:00:00Z"},
+		{ID: "b", Title: "Newer", EpisodeCount: 10, LatestPublish: "2024-06-01T00:00:00Z"},
+		{ID: "c", Title: "Newest", EpisodeCount: 10, LatestPublish: "2024-12-01T00:00:00Z"},
+	})
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	// Default sort (no param) should also be latest.
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?sort=latest", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	idxNewest := strings.Index(body, "Newest")
+	idxNewer := strings.Index(body, "Newer")
+	idxOlder := strings.Index(body, "Older")
+	if idxNewest < 0 || idxNewer < 0 || idxOlder < 0 {
+		t.Fatalf("missing podcast titles in body:\n%s", body)
+	}
+	if !(idxNewest < idxNewer && idxNewer < idxOlder) {
+		t.Fatalf("expected order Newest→Newer→Older, got indices %d/%d/%d", idxNewest, idxNewer, idxOlder)
+	}
+}
+
+// manyPods builds n mockPod entries with distinct titles and descending
+// episode counts so the "count" sort is stable and predictable.
+func manyPods(n int) []mockPod {
+	pods := make([]mockPod, 0, n)
+	for i := 0; i < n; i++ {
+		pods = append(pods, mockPod{
+			ID:            fmt.Sprintf("id-%d", i),
+			Title:         fmt.Sprintf("Pod %02d", i),
+			EpisodeCount:  float64(n - i),
+			LatestPublish: "2024-01-01T00:00:00Z",
+		})
+	}
+	return pods
+}
+
+func TestHandleSubscriptions_Pagination(t *testing.T) {
+	srv := multiPodMockServer(t, manyPods(25))
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=10&page=2", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	// Page 2 (1-based) of 25 items at per_page=10 covers items 11..20.
+	// Count the <li> elements rendered in the response.
+	itemCount := strings.Count(body, "<li")
+	if itemCount != 10 {
+		t.Fatalf("expected 10 items on page 2, got %d: %s", itemCount, body)
+	}
+	if !strings.Contains(body, "Page <strong>2</strong> / 3 (25 podcasts)") {
+		t.Fatalf("expected page info 'Page 2 / 3 (25 podcasts)', got: %s", body)
+	}
+	if !strings.Contains(body, `aria-label="Previous page"`) {
+		t.Fatalf("expected Prev button on page 2: %s", body)
+	}
+	if !strings.Contains(body, `aria-label="Next page"`) {
+		t.Fatalf("expected Next button on page 2 of 3: %s", body)
+	}
+	// Numbered buttons: page 2 should have an aria-current page marker and
+	// a numbered hx-get for page 1 and page 3.
+	if !strings.Contains(body, `aria-current="page"`) {
+		t.Fatalf("expected aria-current page marker on page 2: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/subscriptions?page=1&per_page=10&sort=`) {
+		t.Fatalf("expected numbered button for page 1: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/subscriptions?page=3&per_page=10&sort=`) {
+		t.Fatalf("expected numbered button for page 3: %s", body)
+	}
+	// Page 2 should not contain Pod 00 (page 1) or Pod 24 (page 3).
+	if strings.Contains(body, "Pod 00") {
+		t.Fatalf("page 2 should not contain Pod 00: %s", body)
+	}
+	if strings.Contains(body, "Pod 24") {
+		t.Fatalf("page 2 should not contain Pod 24: %s", body)
+	}
+}
+
+func TestHandleSubscriptions_PerPageClamping(t *testing.T) {
+	// Low clamp: per_page=1 falls below the minimum (5) and clamps to the
+	// default (10). With 25 podcasts the first page renders 10 items.
+	srv := multiPodMockServer(t, manyPods(25))
+	t.Cleanup(srv.Close)
+	app := feedTestApp(t, srv)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=1", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := strings.Count(rr.Body.String(), "<li"); got != 10 {
+		t.Fatalf("per_page=1 should clamp to 10 items, got %d", got)
+	}
+
+	// High clamp: per_page=100 exceeds the maximum (50) and clamps to 50.
+	// With 60 total podcasts the first page renders exactly 50 items; 25
+	// would pass even if the clamp were broken, so we use 60 to prove the cap.
+	srvHigh := multiPodMockServer(t, manyPods(60))
+	t.Cleanup(srvHigh.Close)
+	appHigh := feedTestApp(t, srvHigh)
+	routerHigh := appHigh.setupRoutes()
+	req2 := httptest.NewRequest(http.MethodGet, "/subscriptions?per_page=100", nil)
+	req2.Header.Set("HX-Request", "true")
+	rr2 := httptest.NewRecorder()
+	routerHigh.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if got := strings.Count(rr2.Body.String(), "<li"); got != 50 {
+		t.Fatalf("per_page=100 should clamp to 50 items, got %d", got)
+	}
+	if !strings.Contains(rr2.Body.String(), "Page <strong>1</strong> / 2 (60 podcasts)") {
+		t.Fatalf("expected page info 'Page 1 / 2 (60 podcasts)', got: %s", rr2.Body.String())
+	}
+}
+
+func TestPaginationPages(t *testing.T) {
+	// nums extracts just the page numbers (ellipsis shown as 0) for compact comparison.
+	nums := func(buttons []PageButton) []int {
+		out := make([]int, 0, len(buttons))
+		for _, b := range buttons {
+			if b.Ellipsis {
+				out = append(out, 0)
+			} else {
+				out = append(out, b.Number)
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		page  int
+		total int
+		want  []int // 0 represents an ellipsis
+	}{
+		{"single page", 1, 1, []int{1}},
+		{"total under 7 shows all", 3, 5, []int{1, 2, 3, 4, 5}},
+		{"total exactly 7 shows all", 4, 7, []int{1, 2, 3, 4, 5, 6, 7}},
+		{"page 1 shows leading edge window", 1, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"page 2 keeps edge + neighbor", 2, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"page 3 edge overlaps current", 3, 43, []int{1, 2, 3, 4, 0, 41, 42, 43}},
+		{"mid page shows both edges + neighbors", 21, 43, []int{1, 2, 3, 0, 20, 21, 22, 0, 41, 42, 43}},
+		{"near-end page shows trailing edge", 41, 43, []int{1, 2, 3, 0, 40, 41, 42, 43}},
+		{"last page shows trailing edge window", 43, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps out-of-range page", 99, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps zero page", 0, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps zero total to one page", 1, 0, []int{1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nums(paginationPages(tc.page, tc.total))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("paginationPages(%d, %d) = %v, want %v", tc.page, tc.total, got, tc.want)
+			}
+		})
+	}
+}
+
+type mockPod struct {
+	ID            string
+	Title         string
+	EpisodeCount  float64
+	LatestPublish string
+}
+
+// multiPodMockServer returns a mock Podimo GraphQL server returning the
+// given followed podcasts.
+func multiPodMockServer(t *testing.T, pods []mockPod) *httptest.Server {
+	t.Helper()
+	followed := make([]interface{}, 0, len(pods))
+	for _, p := range pods {
+		followed = append(followed, map[string]interface{}{
+			"id":            p.ID,
+			"title":         p.Title,
+			"coverImageUrl": "http://cover.jpg",
+			"episodeCount":  p.EpisodeCount,
+			"latestEpisode": map[string]interface{}{
+				"publishDatetime": p.LatestPublish,
+			},
+		})
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{"podcastsFollowed": followed},
+		})
+	}))
 }
 
 func TestHandleFeed_AuthError(t *testing.T) {
@@ -543,14 +882,25 @@ func mockGraphQLServer(t *testing.T, responses []map[string]interface{}) *httpte
 	}))
 }
 
-func TestLoadConfig_InvalidBool(t *testing.T) {
-	t.Setenv("PODIMO_DEBUG", "maybe")
+func TestLoadConfig_InvalidLogLevel(t *testing.T) {
+	t.Setenv("PODIMO_LOG_LEVEL", "verbose")
 	_, err := LoadConfig("")
 	if err == nil {
-		t.Fatal("expected error for invalid DEBUG value")
+		t.Fatal("expected error for invalid LOG_LEVEL value")
 	}
-	if !strings.Contains(err.Error(), "debug") {
-		t.Fatalf("expected debug in error, got %v", err)
+	if !strings.Contains(err.Error(), "log_level") {
+		t.Fatalf("expected log_level in error, got %v", err)
+	}
+}
+
+func TestLoadConfig_InvalidBool(t *testing.T) {
+	t.Setenv("PODIMO_LOCAL_CREDENTIALS", "maybe")
+	_, err := LoadConfig("")
+	if err == nil {
+		t.Fatal("expected error for invalid LOCAL_CREDENTIALS value")
+	}
+	if !strings.Contains(err.Error(), "local_credentials") {
+		t.Fatalf("expected local_credentials in error, got %v", err)
 	}
 }
 
@@ -565,14 +915,14 @@ func TestLoadConfig_InvalidDuration(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_TrimmedBool(t *testing.T) {
-	t.Setenv("PODIMO_DEBUG", " true ")
+func TestLoadConfig_TrimmedLogLevel(t *testing.T) {
+	t.Setenv("PODIMO_LOG_LEVEL", " WARN ")
 	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.Debug {
-		t.Fatal("expected true after trimming")
+	if cfg.LogLevel != "warn" {
+		t.Fatalf("expected warn after trim/lower, got %q", cfg.LogLevel)
 	}
 }
 
@@ -587,19 +937,108 @@ func TestLoadConfig_TrimmedDuration(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_DateFormatDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "date_format"} {
+		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
+	}
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DateFormat != "2006-01-02" {
+		t.Fatalf("expected default date_format 2006-01-02, got %q", cfg.DateFormat)
+	}
+}
+
+func TestLoadConfig_DateFormatOverride(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "email", "password"} {
+		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
+	}
+	t.Setenv("PODIMO_DATE_FORMAT", "Jan 2, 2006")
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DateFormat != "Jan 2, 2006" {
+		t.Fatalf("expected Jan 2, 2006, got %q", cfg.DateFormat)
+	}
+}
+
+func TestHandleSubscriptions_FormatsDate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{
+						"id":            "p1",
+						"title":         "Date Format Show",
+						"coverImageUrl": "http://cover.jpg",
+						"episodeCount":  42,
+						"latestEpisode": map[string]interface{}{
+							"publishDatetime": "2024-05-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	// Override the default format to a locale-style layout.
+	app.cfg.DateFormat = "Jan 2, 2006"
+	// Re-parse templates with the new format's FuncMap.
+	app.templates = template.Must(template.New("").Funcs(template.FuncMap{
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
+		"formatDate": func(raw string) string {
+			if raw == "" {
+				return ""
+			}
+			if t, err := time.Parse(time.RFC3339, raw); err == nil {
+				return t.Format(app.cfg.DateFormat)
+			}
+			return raw
+		},
+	}).ParseFS(templatesFS, "templates/index.html", "templates/feed_location.html", "templates/partials/*.html"))
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "updated May 1, 2024") {
+		t.Fatalf("expected 'updated May 1, 2024' in HTML, got: %s", body)
+	}
+}
+
 func TestLoadConfig_WithYAMLFile(t *testing.T) {
 	// Run from a temp dir so godotenv.Load(".env") inside LoadConfig finds no
 	// .env file, and blank any PODIMO_* vars leaked into the process env by
 	// earlier tests/godotenv so the koanf env provider's empty-skip transform
 	// drops them and falls back to the YAML file values instead of the repo .env.
 	t.Chdir(t.TempDir())
-	for _, key := range []string{"hostname", "bind_host", "protocol", "debug", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
+	for _, key := range []string{"hostname", "bind_host", "protocol", "log_level", "local_credentials", "email", "password", "podcast_cache_time", "public_feeds", "token_cache_time", "head_cache_time", "http_proxy", "zenrows_api", "scraper_api"} {
 		t.Setenv("PODIMO_"+strings.ToUpper(key), "")
 	}
 	content := `hostname: "podimo.example.com"
 bind_host: "0.0.0.0:3000"
 protocol: "https"
-debug: true
+log_level: "debug"
 local_credentials: true
 email: "alice@example.com"
 password: "secret"
@@ -625,8 +1064,8 @@ public_feeds: true
 	if cfg.Protocol != "https" {
 		t.Errorf("protocol: got %q, want %q", cfg.Protocol, "https")
 	}
-	if !cfg.Debug {
-		t.Error("debug: expected true")
+	if cfg.LogLevel != "debug" {
+		t.Errorf("log_level: got %q, want %q", cfg.LogLevel, "debug")
 	}
 	if !cfg.LocalCredentials {
 		t.Error("local_credentials: expected true")
@@ -709,6 +1148,7 @@ func TestRateLimitMiddleware_TrustedProxyHeader(t *testing.T) {
 	// would be rate-limited (max=1).
 	for _, xff := range []string{"1.1.1.1", "2.2.2.2"} {
 		req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+		req.Header.Set("HX-Request", "true")
 		req.Header.Set("X-Forwarded-For", xff)
 		rr := httptest.NewRecorder()
 		router.ServeHTTP(rr, req)
@@ -717,8 +1157,8 @@ func TestRateLimitMiddleware_TrustedProxyHeader(t *testing.T) {
 		}
 	}
 
-	// A second request from the same XFF IP should now be rate-limited (max=1).
 	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	req.Header.Set("HX-Request", "true")
 	req.Header.Set("X-Forwarded-For", "1.1.1.1")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -848,5 +1288,457 @@ func TestClientsMap_EvictionClosesIdleConnections(t *testing.T) {
 	}
 	if tt2.closedIdle {
 		t.Fatal("expected non-evicted client's CloseIdleConnections to NOT be called")
+	}
+}
+
+func TestLoggingMiddleware_Status(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	app := setupTestApp(t)
+	app.logger = logger
+
+	// Build a handler that deliberately writes 404, wrapped in the middleware.
+	mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/some-missing", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "status=404") {
+		t.Fatalf("expected log to contain status=404, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "Request completed") {
+		t.Fatalf("expected completion log line, got:\n%s", logged)
+	}
+}
+
+func TestLoggingMiddleware_LevelFiltering(t *testing.T) {
+	// At Info level: completion logs, start does not.
+	t.Run("info hides start, shows completion", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		logged := buf.String()
+		if strings.Contains(logged, "Request started") {
+			t.Fatalf("expected 'Request started' hidden at Info, got:\n%s", logged)
+		}
+		if !strings.Contains(logged, "Request completed") {
+			t.Fatalf("expected 'Request completed' at Info, got:\n%s", logged)
+		}
+	})
+
+	// At Debug level: both start and completion log.
+	t.Run("debug shows both", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		mw := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		mw.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		logged := buf.String()
+		if !strings.Contains(logged, "Request started") {
+			t.Fatalf("expected 'Request started' at Debug, got:\n%s", logged)
+		}
+		if !strings.Contains(logged, "Request completed") {
+			t.Fatalf("expected 'Request completed' at Debug, got:\n%s", logged)
+		}
+	})
+
+	// 4xx logs at Warn, 5xx logs at Error.
+	t.Run("4xx at warn, 5xx at error", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := setupTestApp(t)
+		app.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		// 404 → Warn
+		mw404 := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		buf.Reset()
+		mw404.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
+		if !strings.Contains(buf.String(), "level=WARN") {
+			t.Fatalf("expected 404 to log at WARN, got:\n%s", buf.String())
+		}
+
+		// 500 → Error
+		mw500 := app.loggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		buf.Reset()
+		mw500.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
+		if !strings.Contains(buf.String(), "level=ERROR") {
+			t.Fatalf("expected 500 to log at ERROR, got:\n%s", buf.String())
+		}
+	})
+}
+
+func TestHandleReady_Reachable(t *testing.T) {
+	// Any HTTP response (even 405) proves reachability.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	t.Cleanup(srv.Close)
+	app := setupTestApp(t)
+	app.ready = &readyProbe{endpoint: srv.URL}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	app.handleReady(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 ready, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ready"`) {
+		t.Fatalf("expected ready body, got %s", rr.Body.String())
+	}
+}
+
+func TestHandleReady_Unreachable(t *testing.T) {
+	app := setupTestApp(t)
+	// Port 1 is reserved and will refuse connections.
+	app.ready = &readyProbe{endpoint: "http://127.0.0.1:1"}
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+	app.handleReady(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"not ready"`) {
+		t.Fatalf("expected not-ready body, got %s", rr.Body.String())
+	}
+}
+
+func TestHandleReady_Cached(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		atomic.AddInt32(&hits, 1)
+	}))
+	t.Cleanup(srv.Close)
+	app := setupTestApp(t)
+	app.ready = &readyProbe{endpoint: srv.URL}
+
+	// First call probes the server.
+	req1 := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr1 := httptest.NewRecorder()
+	app.handleReady(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first call: expected 200, got %d", rr1.Code)
+	}
+
+	// Second call within the 10s cache window must NOT hit the server again.
+	req2 := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr2 := httptest.NewRecorder()
+	app.handleReady(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second call: expected 200, got %d", rr2.Code)
+	}
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("expected server to be hit exactly once, got %d", got)
+	}
+}
+
+func TestWithAuthRetry_RefreshSuccess(t *testing.T) {
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		switch callCount {
+		case 1:
+			// First GetPodcasts attempt: auth error (stale token).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"errors": []map[string]interface{}{{"message": "Unauthorized"}},
+			})
+		case 2, 3, 4:
+			// RefreshToken: 3-step login handshake.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"tokenWithPreregisterUser": map[string]interface{}{"token": "pre"},
+					"userOnboardingFlow":       map[string]interface{}{"id": "oid"},
+					"tokenWithCredentials":     map[string]interface{}{"token": "fresh-token"},
+				},
+			})
+		default:
+			// Retry GetPodcasts after refresh: success.
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": map[string]interface{}{
+					"podcast":  map[string]interface{}{"title": "T"},
+					"episodes": []interface{}{},
+				},
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	tc, _ := podimo.NewFileCache(dir + "/tokens")
+	pc, _ := podimo.NewFileCache(dir + "/podcasts")
+	// Set the stale token BEFORE constructing the client so the constructor
+	// loads it into client.token and GetPodcasts uses it (and hits the auth
+	// error) on the first attempt.
+	_ = tc.Set(podimo.TokenKey("u", "p"), "stale-token", time.Hour)
+	gl := podimo.NewGraphQLClient(srv.URL, srv.Client())
+	client, _ := podimo.NewPodimoClient("u", "p", "nl", "nl-NL", gl, tc, pc, nil)
+
+	ctx := context.Background()
+	data, err := withAuthRetry(ctx, client, func(c context.Context) (*podimo.PodcastData, error) {
+		return client.GetPodcasts(c, "pid", 0)
+	})
+	if err != nil {
+		t.Fatalf("expected success after refresh, got %v", err)
+	}
+	if data == nil || data.Podcast.Title != "T" {
+		t.Fatalf("expected data with title T, got %+v", data)
+	}
+}
+
+func TestWithAuthRetry_NoAuthError(t *testing.T) {
+	// A non-auth error must be returned as-is, with no refresh attempted.
+	// withAuthRetry only calls RefreshToken on *AuthenticationError, so a
+	// generic error passes through unchanged even with a nil client.
+	got, err := withAuthRetry(context.Background(), nil, func(ctx context.Context) (string, error) {
+		return "", fmt.Errorf("network down")
+	})
+	if err == nil || err.Error() != "network down" {
+		t.Fatalf("expected 'network down' error to pass through, got %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected zero value, got %q", got)
+	}
+}
+
+func TestWithAuthRetry_SuccessNoRetry(t *testing.T) {
+	// fn succeeds on first call — no refresh, no second invocation.
+	var calls int
+	got, err := withAuthRetry(context.Background(), nil, func(ctx context.Context) (int, error) {
+		calls++
+		return 42, nil
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != 42 {
+		t.Fatalf("expected 42, got %d", got)
+	}
+	if calls != 1 {
+		t.Fatalf("expected fn called exactly once, got %d", calls)
+	}
+}
+
+// feedMockServer returns a mock Podimo GraphQL server that serves a single
+// episode with a fixed publish date. Reused by the feed-caching tests.
+func feedMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcast": map[string]interface{}{
+					"title":       "Cache Podcast",
+					"description": "Desc",
+					"authorName":  "Author",
+					"language":    "en",
+					"images":      map[string]interface{}{"coverImageUrl": "http://cover.jpg"},
+				},
+				"episodes": []interface{}{
+					map[string]interface{}{
+						"id":              "ep1",
+						"title":           "Episode 1",
+						"publishDatetime": "2023-01-01T00:00:00Z",
+						"audio":           map[string]interface{}{"url": "http://audio.mp3", "duration": 60.0},
+					},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// feedTestApp builds a test app pointed at a feed mock with token/head caches
+// pre-populated so requests skip login and HEAD requests.
+func feedTestApp(t *testing.T, srv *httptest.Server) *App {
+	t.Helper()
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+	_ = app.headCache.Set("ep1", map[string]interface{}{"length": "100", "type": "audio/mpeg"}, time.Hour)
+	return app
+}
+
+const feedTestPath = "/feed/12345678-1234-1234-1234-123456789abc.xml?region=nl&locale=nl-NL"
+
+func TestHandleFeed_ETag_304(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	// First request captures the ETag.
+	req1 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr1 := httptest.NewRecorder()
+	router.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	etag := rr1.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("expected non-empty ETag header")
+	}
+
+	// Second request with If-None-Match must return 304 and empty body.
+	req2 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	req2.Header.Set("If-None-Match", etag)
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if rr2.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 304, got %q", rr2.Body.String())
+	}
+}
+
+func TestHandleFeed_CacheControl(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	cc := rr.Header().Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=3600") {
+		t.Fatalf("expected Cache-Control with max-age=3600, got %q", cc)
+	}
+	if !strings.Contains(cc, "stale-while-revalidate") {
+		t.Fatalf("expected stale-while-revalidate in Cache-Control, got %q", cc)
+	}
+}
+
+func TestHandleFeed_LastModified_304(t *testing.T) {
+	srv := feedMockServer(t)
+	app := feedTestApp(t, srv)
+	router := app.setupRoutes()
+
+	// First request captures Last-Modified.
+	req1 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	rr1 := httptest.NewRecorder()
+	router.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	lm := rr1.Header().Get("Last-Modified")
+	if lm == "" {
+		t.Fatal("expected non-empty Last-Modified header")
+	}
+
+	// Second request with If-Modified-Since set to the same value must 304.
+	req2 := httptest.NewRequest(http.MethodGet, feedTestPath, nil)
+	req2.Header.Set("If-Modified-Since", lm)
+	rr2 := httptest.NewRecorder()
+	router.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	if rr2.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 304, got %q", rr2.Body.String())
+	}
+}
+
+func TestHandleSubscriptionsOPML(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"podcastsFollowed": []interface{}{
+					map[string]interface{}{"id": "id-a", "title": "Podcast A"},
+					map[string]interface{}{"id": "id-b", "title": "Podcast B"},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	app := setupTestAppWithMock(t, srv.URL)
+	app.cfg.LocalCredentials = true
+	app.cfg.Email = "u"
+	app.cfg.Password = "p"
+	_ = app.tokenCache.Set(podimo.TokenKey("u", "p"), "fake-token", time.Hour)
+
+	router := app.setupRoutes()
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions.opml?region=nl&locale=nl-NL", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/x-opml") {
+		t.Fatalf("expected Content-Type text/x-opml, got %q", ct)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "<opml") {
+		t.Fatalf("expected <opml> root, got %s", body)
+	}
+	if !strings.Contains(body, "<outline") {
+		t.Fatalf("expected <outline> entries, got %s", body)
+	}
+	if !strings.Contains(body, "Podcast A") || !strings.Contains(body, "Podcast B") {
+		t.Fatalf("expected both podcast titles in OPML, got %s", body)
+	}
+	// Each outline must carry an xmlUrl that contains the podcast ID.
+	if !strings.Contains(body, "id-a") || !strings.Contains(body, "id-b") {
+		t.Fatalf("expected feed URLs containing podcast IDs in OPML, got %s", body)
+	}
+}
+
+func TestHandleSubscriptions_DirectVisitRedirects(t *testing.T) {
+	app := setupTestApp(t)
+	router := app.setupRoutes()
+
+	// Direct GET without the HTMX header must redirect to /.
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected Location /, got %q", loc)
+	}
+}
+
+func TestHandleSearch_DirectVisitRedirects(t *testing.T) {
+	app := setupTestApp(t)
+	router := app.setupRoutes()
+
+	// Direct GET without the HTMX header must redirect to /.
+	req := httptest.NewRequest(http.MethodGet, "/search?q=test", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected Location /, got %q", loc)
 	}
 }

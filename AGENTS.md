@@ -1,7 +1,7 @@
 # Agent Context: Podimo to RSS
 
 > This file provides context for AI assistants working on the codebase.
-> Last updated: 2026-05-26
+> Last updated: 2026-07-19
 
 ## Language Policy
 
@@ -31,7 +31,7 @@ Dutch locale identifiers like `nl`, `nl-NL`, `Nederland` are permitted only wher
 ## Quick Architecture
 
 ```
-main.go          → HTTP server, routes, handlers, middleware, RSS feed serving
+main.go          → HTTP server, routes, handlers, middleware (logging with status capture, rate limiting), RSS feed serving with ETag/Last-Modified/Cache-Control, /ready probe, /subscriptions.opml export, withAuthRetry helper, feedURLFor builder
 config.go        → Environment variables, constants, block list, Config struct
 podimo/
   client.go      → GraphQL API client (login, episode fetching, search, subscriptions)
@@ -39,7 +39,7 @@ podimo/
   rss.go         → RSS feed generation via `eduncan911/podcast`
   cache.go       → JSON-file-backed TTL cache (token, podcast, HEAD caches)
   boundedmap.go  → Generic in-memory LRU cache with TTL eviction
-static/          → Embedded static files (CSS stylesheet)
+static/          → Embedded static files (minified CSS + source maps, WOFF2 font, JS libraries)
 templates/       → HTML templates (index.html, feed_location.html, partials/*.html), embedded via `embed.FS`
 main_test.go     → Handler tests (health, index, feed, search, subscriptions, rate limiting)
   podimo/client_test.go → PodimoClient constructor, login, token cache
@@ -62,7 +62,8 @@ main_test.go     → Handler tests (health, index, feed, search, subscriptions, 
 | `templates/index.html` | Form: email, password, podcast ID, region, locale. Uses HTMX and Alpine.js for search, subscriptions, and copy-to-clipboard. Extracts UUID from full Podimo URLs via JS regex. |
 | `templates/feed_location.html` | Shows generated feed URL with copy button and QR code. |
 | `templates/partials/*.html` | HTMX partials for search results, subscriptions, and feed result. |
-| `static/style.css` | External stylesheet with dark mode support. |
+| `static/style.css` | Edit-source stylesheet with dark mode support; minified to `style.min.css` (with `.map`) via `just css-minify`. Templates link the minified version. |
+| `static/fonts.css` | Edit-source `@font-face` declarations for the self-hosted Newsreader variable WOFF2 font; minified to `fonts.min.css` (with `.map`). |
 | `config.example.yaml` | Reference configuration file. Documented flat-YAML schema with all options and defaults. Copy to `config.yaml` to customize. |
 | `podimo/boundedmap.go` | `BoundedMap` - generic in-memory LRU cache with optional TTL and background cleanup. Used for per-user `http.Client` pools and rate-limiter IP tracking. |
 | `Dockerfile` | Multi-stage build: `golang:1.26-alpine` builder → `scratch` runtime (zero attack surface: no shell, no package manager, no libs). Bundles CA certs for outbound HTTPS, runs as nonroot UID 65532, and declares `HEALTHCHECK CMD ["/podimo-rss", "healthcheck"]` using the built-in subcommand (no curl/shell needed). |
@@ -195,15 +196,23 @@ server := &http.Server{
 ```
 
 ### Request Logging
-Requests are logged at both start and completion with timing via a `chi` middleware. URLs are redacted to scrub embedded credentials:
+Requests are logged at both start and completion with timing via a `chi` middleware. URLs are redacted to scrub embedded credentials. The completion log is status-based so `log_level=warn`/`error` surfaces only problems: 5xx → `Error`, 4xx → `Warn`, 2xx/3xx → `Info`. The verbose start line stays at `Debug` (visible only at `log_level=debug`).
 
 ```go
 func (a *App) loggingMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         start := time.Now()
-        a.logger.Debug("Request started", "url", redactURLString(r.URL.String()), ...)
-        next.ServeHTTP(w, r)
-        a.logger.Debug("Request completed", "url", redactURLString(r.URL.String()), "duration", time.Since(start).Seconds())
+        a.logger.Debug("Request started", "method", r.Method, "url", redactURLString(r.URL.String()), "ip", r.RemoteAddr, "ua", r.UserAgent())
+        rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+        next.ServeHTTP(rec, r)
+        switch code := rec.status; {
+        case code >= 500:
+            a.logger.Error("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        case code >= 400:
+            a.logger.Warn("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        default:
+            a.logger.Info("Request completed", "method", r.Method, "url", redactURLString(r.URL.String()), "status", code, "duration", time.Since(start).Seconds())
+        }
     })
 }
 ```
@@ -219,6 +228,34 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
     w.Write([]byte(`{"status":"ok","service":"podimo-rss"}`))
 }
 ```
+
+### Ready Endpoint
+Distinct from `/health` (a cheap liveness probe), `/ready` verifies outbound reachability to the Podimo GraphQL endpoint. A `readyProbe` caches the result for 10 seconds so orchestration probes do not generate a request per poll. Any HTTP response (even 405/404) proves reachability; only connection failures or timeouts mark it unready. Returns 503 when unreachable, 200 when reachable. Not rate-limited, matching `/health`. Use for Kubernetes readiness probes; use `/health` for liveness.
+
+```go
+type readyProbe struct {
+    endpoint string
+    mu       sync.Mutex
+    ok       bool
+    checked  time.Time
+}
+```
+
+### Auth Retry Helper
+The 3 sites that call the Podimo client (`handleSearch`, `handleSubscriptions`, `serveFeed`) share a generic `withAuthRetry[T]` that runs the call, refreshes the token once on `*AuthenticationError`, and retries. Returns the zero value on error. Callers still type-assert the returned error for status-specific handling (`PodcastNotFoundError`, `AuthenticationError`).
+
+```go
+func withAuthRetry[T any](ctx context.Context, client *podimo.PodimoClient, fn func(context.Context) (T, error)) (T, error)
+```
+
+### Pagination Guard
+`GetPodcasts` paginates episodes in pages of 100. Two guards prevent pathological infinite loops: a `maxPages` cap (200) and a seen-episode-ID dedup map that breaks early if the API repeats an ID across pages. Both log a warning and stop pagination.
+
+### Feed HTTP Caching
+`serveFeed` emits conditional-GET headers so podcast apps and shared proxies can cache: a strong `ETag` (sha256 of content-determining fields, 16 hex chars), a `Last-Modified` derived from the newest episode publish time (truncated to second granularity), and `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`. `If-None-Match` and `If-Modified-Since` short-circuit to `304 Not Modified`. The ETag covers podcast ID, title, author, episode count, newest publish date, and the `public_feeds` flag.
+
+### OPML Export
+`GET /subscriptions.opml` returns the user's followed podcasts as an OPML 2.0 document with `xmlUrl` entries pointing at the per-podcast RSS feeds, downloadable as an attachment. Auth mirrors `/subscriptions`. Uses `feedURLFor` (the single feed-URL builder shared with `handleIndex`) which embeds credentials in non-local mode or delegates to `buildFeedURL` in `LocalCredentials` mode.
 
 ## Common Tasks
 
@@ -246,12 +283,12 @@ PODIMO_HEAD_CACHE_TIME=604800
 In `config.yaml`:
 ```yaml
 local_credentials: true   # single-user mode
-debug: true                 # verbose logging
+log_level: "debug"          # verbose logging (debug/info/warn/warning/error)
 ```
 Or via environment variables (prefixed with `PODIMO_`):
 - `PODIMO_LOCAL_CREDENTIALS=true` — single-user mode, credentials stored server-side
 - `PODIMO_PUBLIC_FEEDS=true` — removes `<itunes:block>` from RSS
-- `PODIMO_DEBUG=true` — verbose `slog` logging at `LevelDebug`
+- `PODIMO_LOG_LEVEL=debug` — verbose `slog` logging (values: debug, info, warn, warning, error)
 
 ### Running locally
 ```bash
@@ -286,7 +323,7 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 ✅ **FIXED** - No rate limiting (added per-IP limit: 8 req/10s)
 ✅ **FIXED** - CORS wildcard on all responses (removed)
 ✅ **FIXED** — Docker running as root with build deps (now multi-stage `golang:1.26-alpine` builder → `scratch` runtime with CA certs, nonroot UID 65532, and built-in `healthcheck` subcommand for `HEALTHCHECK`)
-✅ **FIXED** — `DEBUG=true` in `.env.example` (now commented out with security warning)
+✅ **FIXED** — `DEBUG=true` in `.env.example` (replaced by `PODIMO_LOG_LEVEL`, commented out with security warning)
 ✅ **FIXED** — String exception matching in `serve_feed` fallback (all structured via `PodimoError` types)
 ✅ **FIXED** — Logging only at request start (now logs both start and end with duration + status code)
 ✅ **FIXED** — No `/health` endpoint for Docker orchestration (added lightweight JSON health probe)
@@ -305,9 +342,9 @@ docker run -p 12104:12104 -e PODIMO_BIND_HOST=0.0.0.0:12104 podimo-rss
 
 Users no longer need to manually extract podcast IDs from Podimo URLs. The web UI provides two discovery mechanisms:
 
-1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
+1. **Search by name** - The index page includes a search form that calls `GET /search?q=...` via the Podimo GraphQL `podcastsAutocomplete` endpoint. This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Results display cover image, title, and author. Clicking a result auto-fills the podcast ID field.
 
-2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query).
+2. **Your subscriptions** - Authenticated users can view their followed podcasts via `GET /subscriptions` (Podimo GraphQL `podcastsFollowed` query). This is an HTMX partial endpoint: direct browser visits (without the `HX-Request: true` header) are redirected to `/`. Each entry shows the episode count and latest-episode date (fetched via the `episodeCount` and `latestEpisode { publishDatetime }` fields, with a minimal-field fallback if the schema rejects them). The date format is configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`). Results are sortable via a `sort` query parameter (`latest` [default], `count`, `title`); the sort is applied server-side in `sortSubscriptions` with deterministic title tie-breaking, and `latest` parses `time.RFC3339Nano` timestamps for correct chronological ordering. The UI exposes the sort via an HTMX `<select>` that re-fetches the partial on change.
 
 The web form still supports pasting a full Podimo URL (e.g. `https://open.podimo.com/podcast/09c55c96-...`) - the UUID is extracted via client-side JavaScript regex.
 
@@ -317,14 +354,15 @@ There is now a **Go test suite** with 6 test files:
 
 | File | Coverage |
 |------|----------|
-| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/search` 200, `/subscriptions` 200, 404, 400 for invalid UUID, rate limiter behavior |
-| `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling |
+| `main_test.go` | Handler tests: `/` 200, `/health` 200, `/ready` (reachable/unreachable/cached), `/search` 200, `/subscriptions` 200 + metadata rendering + sort (latest/count/title), `/subscriptions.opml`, feed ETag/304/Cache-Control/Last-Modified, `withAuthRetry`, `statusRecorder` logging, `feedURLFor`, rate limiter behavior, 404, 400 for invalid UUID |
+| `podimo/client_test.go` | `NewPodimoClient` validation, cached token loading, `Login` 3-step flow, auth error handling, `GetPodcasts` pagination dedup + page cap, `GetFollowedPodcasts` extended + minimal fallback |
 | `podimo/graphql_test.go` | `GraphQLClient.Query` status-code handling, structured `GQLError` extraction, 10 MB limit |
 | `podimo/rss_test.go` | `PodcastsToRss` XML output, `ExtractAudioURL`, `URLHeadInfo`, content-type logic, `chunks` |
 | `podimo/cache_test.go` | `FileCache` get/set, TTL expiration, concurrent access |
 | `podimo/boundedmap_test.go` | `BoundedMap` get/set, LRU eviction, TTL expiration, concurrent access |
 
 Run with:
+```bash
 just test
 ```
 
@@ -347,11 +385,11 @@ Example:
 ```yaml
 hostname: "myserver.example.com"
 bind_host: "0.0.0.0:12104"
-debug: true
+log_level: "debug"
 ```
 
 ### Env vars (override)
-All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` files are still supported via godotenv pre-load.
+All variables must use the `PODIMO_` prefix (e.g. `PODIMO_LOG_LEVEL=debug`). `.env` files are still supported via godotenv pre-load.
 
 ### CLI flag (custom file path)
 ```bash
@@ -360,7 +398,7 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 
 ### Precedence (highest first)
 1. `--config /path/to/config.yaml` (explicit CLI flag)
-2. Environment variables (`PODIMO_DEBUG=true`)
+2. Environment variables (`PODIMO_LOG_LEVEL=debug`)
 3. `config.yaml` in working dir or `/etc/podimo-rss/`
 4. `.env` file (pre-loaded into env vars)
 5. Hardcoded defaults
@@ -383,7 +421,8 @@ All variables must use the `PODIMO_` prefix (e.g. `PODIMO_DEBUG=true`). `.env` f
 | `PODIMO_PODCAST_CACHE_TIME` / `podcast_cache_time` | `21600s` | Episode list cache TTL |
 | `PODIMO_HEAD_CACHE_TIME` / `head_cache_time` | `604800s` | HEAD response cache TTL |
 | `PODIMO_PUBLIC_FEEDS` / `public_feeds` | `false` | Remove `<itunes:block>` from RSS |
-| `PODIMO_DEBUG` / `debug` | `false` | Verbose `slog` logging
+| `PODIMO_DATE_FORMAT` / `date_format` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
+| `PODIMO_LOG_LEVEL` / `log_level` | `info` | `slog` level: debug, info, warn, warning, error |
 
 ## Security Notes for Agents
 
@@ -400,7 +439,7 @@ If modifying this codebase, consider:
 - Adding more granular rate limits per-user (currently IP-based only)
 - Moving from `FileCache` to `redis` or similar for multi-instance deployments
 - Configuring stricter `go vet` / `staticcheck` / `golangci-lint` rules
-- Adding OpenAPI/Swagger docs for the JSON endpoints (`/search`, `/subscriptions`)
+- Documenting the HTMX partial endpoints (`/search`, `/subscriptions`) and their direct-visit redirect behavior
 
 ## Developer Workflow
 

@@ -30,9 +30,9 @@ Podimo is a proprietary podcast platform with exclusive shows behind a paywall. 
 
 🔍 **Search by name** — No need to hunt for UUIDs on Podimo's website. Type a podcast name and pick from results.
 
-📻 **Your subscriptions** — After logging in, view all podcasts you follow and generate feeds with one click.
+📻 **Your subscriptions** — After logging in, view all podcasts you follow with episode counts and latest-episode dates. Sort by newest episode, most episodes, or A–Z, and generate feeds with one click.
 
-🩺 **Health endpoint** — A lightweight `/health` probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK` (works on the `scratch` base image with no shell).
+🩺 **Health & readiness endpoints** — A lightweight `/health` liveness probe plus a built-in `healthcheck` subcommand for Docker `HEALTHCHECK`, and a separate `/ready` endpoint that verifies outbound reachability to the Podimo API (for Kubernetes readiness probes).
 
 🚀 **Single static binary** — Rewritten in Go, compiles to one executable with no runtime dependencies, packaged in a zero-attack-surface `scratch` Docker image.
 
@@ -166,9 +166,10 @@ Paste that ID into the **Podcast ID or URL** field on the homepage.
 | Endpoint | Description | Auth |
 |----------|-------------|------|
 | `GET /` | Web interface (form + search) | — |
-| `GET /health` | JSON health probe for Docker/K8s | — |
-| `GET /search?q=...` | Search podcasts by name | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
-| `GET /subscriptions` | List followed podcasts | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
+| `GET /health` | JSON liveness probe for Docker `HEALTHCHECK` | — |
+| `GET /ready` | JSON readiness probe; checks Podimo API reachability (use for K8s readiness) | — |
+| `GET /search?q=...` | Search podcasts by name (HTMX partial; direct visit redirects to `/`) | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
+| `GET /subscriptions` | List followed podcasts (HTMX partial; direct visit redirects to `/`) | Basic Auth or `PODIMO_LOCAL_CREDENTIALS` |
 | `GET /feed/<id>.xml` | RSS feed (credentials in URL) | Basic Auth |
 | `GET /feed/<user>/<pass>/<id>.xml` | RSS feed (credentials in path) | — |
 
@@ -187,6 +188,8 @@ Key settings:
 | `PODIMO_EMAIL` / `PODIMO_PASSWORD` | — | Server-side credentials when `PODIMO_LOCAL_CREDENTIALS=true` |
 | `PODIMO_ZENROWS_API` / `PODIMO_SCRAPER_API` | — | Anti-bot proxy keys |
 | `PODIMO_PUBLIC_FEEDS` | `false` | Remove `<itunes:block>` from RSS for discoverability |
+| `PODIMO_DATE_FORMAT` | `2006-01-02` | Go `time.Format` layout for the latest-episode date on `/subscriptions` |
+| `PODIMO_LOG_LEVEL` | `info` | `slog` level: `debug`, `info`, `warn`, `warning`, `error` |
 
 Full reference: [config.example.yaml](config.example.yaml) or [.env.example](.env.example)
 
