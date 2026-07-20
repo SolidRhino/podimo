@@ -3,13 +3,16 @@
 {{ else if not .Results }}
 <em class="search-msg">No subscriptions found.</em>
 {{ else }}
-<ul>
+<div class="subs-summary">
+  <span class="toolbar-count">{{ .Total }} podcasts</span>
+</div>
+<ul class="subs-list">
   {{ range .Results }}
   <li onclick="selectPodcast('{{ .ID }}')">
     {{ if .CoverImageURL }}
     <img src="{{ .CoverImageURL }}" width="48" height="48">
     {{ end }}
-    <div>
+    <div class="sub-meta">
       <strong>{{ .Title }}</strong>
       {{ if .EpisodeCount }}
       <br><small>{{ printf "%.0f" .EpisodeCount }} episodes{{ if .LatestEpisode.PublishDatetime }} · updated {{ formatDate .LatestEpisode.PublishDatetime }}{{ end }}</small>
@@ -18,22 +21,37 @@
   </li>
   {{ end }}
 </ul>
-<div class="subs-pagination">
-  <span class="subs-page-info">{{ .Page }} / {{ .TotalPages }} ({{ .Total }} podcasts)</span>
+<nav class="subs-pagination" aria-label="Subscription pages">
+  <span class="subs-page-info">Page <strong>{{ .Page }}</strong> / {{ .TotalPages }} ({{ .Total }} podcasts)</span>
   <div class="subs-pagination-controls"
        hx-target="#subscriptionsResults"
        hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
        hx-indicator=".subs-loader">
     {{ if gt .Page 1 }}
-    <button type="button" class="btn-secondary btn-sm"
+    <button type="button" class="page-btn" name="page" value="{{ sub .Page 1 }}"
             hx-get="/subscriptions?page={{ sub .Page 1 }}&per_page={{ .PerPage }}&sort={{ .Sort }}"
-            hx-trigger="click">‹ Prev</button>
+            aria-label="Previous page">
+      <span class="arrow" aria-hidden="true">‹</span>
+    </button>
+    {{ end }}
+    {{ range paginationPages .Page .TotalPages }}
+    {{ if .Ellipsis }}
+    <span class="page-ellipsis" aria-hidden="true">…</span>
+    {{ else }}
+    <button type="button" class="page-btn" name="page" value="{{ .Number }}"
+            {{ if eq $.Page .Number }}aria-current="page"{{ end }}
+            hx-get="/subscriptions?page={{ .Number }}&per_page={{ $.PerPage }}&sort={{ $.Sort }}">
+      {{ .Number }}
+    </button>
+    {{ end }}
     {{ end }}
     {{ if lt .Page .TotalPages }}
-    <button type="button" class="btn-secondary btn-sm"
+    <button type="button" class="page-btn" name="page" value="{{ add .Page 1 }}"
             hx-get="/subscriptions?page={{ add .Page 1 }}&per_page={{ .PerPage }}&sort={{ .Sort }}"
-            hx-trigger="click">Next ›</button>
+            aria-label="Next page">
+      <span class="arrow" aria-hidden="true">›</span>
+    </button>
     {{ end }}
   </div>
-</div>
+</nav>
 {{ end }}

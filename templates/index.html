@@ -84,24 +84,35 @@
     <div class="form-section">
       <h2>📻 Your Subscriptions</h2>
       <div class="field-group">
-        <select id="subsSort" name="sort" aria-label="Sort subscriptions"
-                {{ if not .NeedCredentials }}
-                hx-get="/subscriptions" hx-target="#subscriptionsResults"
-                hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
-                hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
-          <option value="latest">Newest episode first</option>
-          <option value="count">Most episodes</option>
-          <option value="title">A–Z</option>
-        </select>
-        <select id="subsPerPage" name="per_page" aria-label="Items per page"
-                {{ if not .NeedCredentials }}
-                hx-get="/subscriptions" hx-target="#subscriptionsResults"
-                hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
-                hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
-          <option value="10" selected>10 per page</option>
-          <option value="20">20 per page</option>
-          <option value="50">50 per page</option>
-        </select>
+        <div class="subs-toolbar" role="region" aria-label="Sort and page size">
+          <div class="toolbar-field">
+            <label for="subsSort" class="field-label">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3v8M4 11l-2-2M4 11l2-2M12 13V5M12 5l-2 2M12 5l2 2"/></svg>
+              Sort
+            </label>
+            <select id="subsSort" name="sort" class="subs-select" aria-label="Sort subscriptions"
+                    {{ if not .NeedCredentials }}
+                    hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                    hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+                    hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
+              <option value="latest">Newest episode first</option>
+              <option value="count">Most episodes</option>
+              <option value="title">A–Z</option>
+            </select>
+          </div>
+          <div class="toolbar-field">
+            <label for="subsPerPage" class="field-label">Show</label>
+            <select id="subsPerPage" name="per_page" class="subs-select" aria-label="Items per page"
+                    {{ if not .NeedCredentials }}
+                    hx-get="/subscriptions" hx-target="#subscriptionsResults"
+                    hx-include="[name='region'], [name='locale'], #subsSort, #subsPerPage"
+                    hx-trigger="change" hx-indicator=".subs-loader"{{ end }}>
+              <option value="10" selected>10 / page</option>
+              <option value="20">20 / page</option>
+              <option value="50">50 / page</option>
+            </select>
+          </div>
+        </div>
         <div id="subscriptionsResults" class="search-results"
              role="region" aria-live="polite" aria-label="Subscriptions"
              hx-get="/subscriptions" hx-target="this"

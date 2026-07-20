@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -45,8 +46,9 @@ func setupTestApp(t *testing.T) *App {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tmpl, err := template.New("").Funcs(template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""
@@ -589,14 +591,25 @@ func TestHandleSubscriptions_Pagination(t *testing.T) {
 	if itemCount != 10 {
 		t.Fatalf("expected 10 items on page 2, got %d: %s", itemCount, body)
 	}
-	if !strings.Contains(body, "2 / 3 (25 podcasts)") {
-		t.Fatalf("expected page info '2 / 3 (25 podcasts)', got: %s", body)
+	if !strings.Contains(body, "Page <strong>2</strong> / 3 (25 podcasts)") {
+		t.Fatalf("expected page info 'Page 2 / 3 (25 podcasts)', got: %s", body)
 	}
-	if !strings.Contains(body, "‹ Prev") {
+	if !strings.Contains(body, `aria-label="Previous page"`) {
 		t.Fatalf("expected Prev button on page 2: %s", body)
 	}
-	if !strings.Contains(body, "Next ›") {
+	if !strings.Contains(body, `aria-label="Next page"`) {
 		t.Fatalf("expected Next button on page 2 of 3: %s", body)
+	}
+	// Numbered buttons: page 2 should have an aria-current page marker and
+	// a numbered hx-get for page 1 and page 3.
+	if !strings.Contains(body, `aria-current="page"`) {
+		t.Fatalf("expected aria-current page marker on page 2: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/subscriptions?page=1&per_page=10&sort=`) {
+		t.Fatalf("expected numbered button for page 1: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/subscriptions?page=3&per_page=10&sort=`) {
+		t.Fatalf("expected numbered button for page 3: %s", body)
 	}
 	// Page 2 should not contain Pod 00 (page 1) or Pod 24 (page 3).
 	if strings.Contains(body, "Pod 00") {
@@ -643,8 +656,50 @@ func TestHandleSubscriptions_PerPageClamping(t *testing.T) {
 	if got := strings.Count(rr2.Body.String(), "<li"); got != 50 {
 		t.Fatalf("per_page=100 should clamp to 50 items, got %d", got)
 	}
-	if !strings.Contains(rr2.Body.String(), "1 / 2 (60 podcasts)") {
-		t.Fatalf("expected page info '1 / 2 (60 podcasts)', got: %s", rr2.Body.String())
+	if !strings.Contains(rr2.Body.String(), "Page <strong>1</strong> / 2 (60 podcasts)") {
+		t.Fatalf("expected page info 'Page 1 / 2 (60 podcasts)', got: %s", rr2.Body.String())
+	}
+}
+
+func TestPaginationPages(t *testing.T) {
+	// nums extracts just the page numbers (ellipsis shown as 0) for compact comparison.
+	nums := func(buttons []PageButton) []int {
+		out := make([]int, 0, len(buttons))
+		for _, b := range buttons {
+			if b.Ellipsis {
+				out = append(out, 0)
+			} else {
+				out = append(out, b.Number)
+			}
+		}
+		return out
+	}
+	tests := []struct {
+		name  string
+		page  int
+		total int
+		want  []int // 0 represents an ellipsis
+	}{
+		{"single page", 1, 1, []int{1}},
+		{"total under 7 shows all", 3, 5, []int{1, 2, 3, 4, 5}},
+		{"total exactly 7 shows all", 4, 7, []int{1, 2, 3, 4, 5, 6, 7}},
+		{"page 1 shows leading edge window", 1, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"page 2 keeps edge + neighbor", 2, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"page 3 edge overlaps current", 3, 43, []int{1, 2, 3, 4, 0, 41, 42, 43}},
+		{"mid page shows both edges + neighbors", 21, 43, []int{1, 2, 3, 0, 20, 21, 22, 0, 41, 42, 43}},
+		{"near-end page shows trailing edge", 41, 43, []int{1, 2, 3, 0, 40, 41, 42, 43}},
+		{"last page shows trailing edge window", 43, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps out-of-range page", 99, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps zero page", 0, 43, []int{1, 2, 3, 0, 41, 42, 43}},
+		{"clamps zero total to one page", 1, 0, []int{1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nums(paginationPages(tc.page, tc.total))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("paginationPages(%d, %d) = %v, want %v", tc.page, tc.total, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -941,8 +996,9 @@ func TestHandleSubscriptions_FormatsDate(t *testing.T) {
 	app.cfg.DateFormat = "Jan 2, 2006"
 	// Re-parse templates with the new format's FuncMap.
 	app.templates = template.Must(template.New("").Funcs(template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""

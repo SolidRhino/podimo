@@ -141,8 +141,9 @@ func main() {
 	}))
 
 	tmpl, err := template.New("").Funcs(template.FuncMap{
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"add":             func(a, b int) int { return a + b },
+		"sub":             func(a, b int) int { return a - b },
+		"paginationPages": func(page, total int) []PageButton { return paginationPages(page, total) },
 		"formatDate": func(raw string) string {
 			if raw == "" {
 				return ""
@@ -457,6 +458,69 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.renderPartial(w, "search_results.html", map[string]any{"Results": results, "Query": searchQuery})
+}
+
+// PageButton is a single entry in the pagination control: either a
+// numbered page button (Ellipsis=false) or an ellipsis gap marker
+// (Ellipsis=true, Number is 0).
+type PageButton struct {
+	Number   int
+	Ellipsis bool
+}
+
+// paginationPages returns the page buttons to render for a pagination
+// control with the given current page (1-based) and total page count.
+// It always shows the first three and last three pages (edge windows),
+// the current page and its immediate neighbors, and inserts an ellipsis
+// wherever consecutive shown pages have a gap > 1. For totals up to 7
+// pages every page is shown with no ellipsis.
+func paginationPages(page, total int) []PageButton {
+	if total <= 0 {
+		total = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > total {
+		page = total
+	}
+	if total <= 7 {
+		buttons := make([]PageButton, 0, total)
+		for i := 1; i <= total; i++ {
+			buttons = append(buttons, PageButton{Number: i})
+		}
+		return buttons
+	}
+	// Collect the pages to show: first/last, current ± neighbors, edge windows.
+	pages := map[int]struct{}{1: {}, total: {}, page: {}}
+	if page > 1 {
+		pages[page-1] = struct{}{}
+	}
+	if page < total {
+		pages[page+1] = struct{}{}
+	}
+	for _, p := range []int{2, 3, total - 2, total - 1} {
+		if p > 0 && p <= total {
+			pages[p] = struct{}{}
+		}
+	}
+	// Sort the shown pages.
+	sorted := make([]int, 0, len(pages))
+	for p := range pages {
+		sorted = append(sorted, p)
+	}
+	sort.Ints(sorted)
+	// Build buttons, inserting an ellipsis wherever the gap > 1.
+	buttons := make([]PageButton, 0, len(sorted)+2)
+	prev := 0
+	for _, p := range sorted {
+		if prev > 0 && p-prev > 1 {
+			buttons = append(buttons, PageButton{Ellipsis: true})
+		}
+		buttons = append(buttons, PageButton{Number: p})
+		prev = p
+	}
+	return buttons
 }
 
 // sortSubscriptions sorts the followed podcasts by the given mode.
