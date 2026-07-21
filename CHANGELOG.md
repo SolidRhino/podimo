@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.6.0] - 2026-07-21
+
+### Added
+- Subscriptions pagination: `/subscriptions` now renders on page load (LocalCredentials mode) with prev/next navigation and a per-page dropdown (10/20/50, default 10). Server-side slicing over the already-sorted results.
+- Enhanced subscriptions toolbar: sort and per-page dropdowns wrapped in a labeled toolbar row (sort-arrow icon + "Sort", "Show") with custom chevron, accent focus ring, and dark-mode chevron swap. CSS ported from an Open Design exploration.
+- Numbered pagination footer: `‹ 1 2 3 … N ›` with `aria-current="page"` on the active page, ellipsis gaps, and "Page X / Y (N podcasts)" summary. New `paginationPages` helper with edge windows (first/last 3 pages) and ellipsis for gaps > 1.
+- User-selectable sort for subscriptions: Newest episode first (default), Most episodes, A–Z. Changing sort or per-page re-fetches via HTMX and resets to page 1.
+- `/subscriptions.opml` endpoint: OPML 2.0 export of followed podcasts with `xmlUrl` entries pointing at per-podcast RSS feeds.
+- `/ready` endpoint: probes outbound Podimo GraphQL reachability with a 10-second cached result. Returns 503 when unreachable, 200 when reachable. Use for Kubernetes readiness probes; use `/health` for liveness.
+- ETag, Last-Modified, and Cache-Control headers on feed responses with `If-None-Match`/`If-Modified-Since` short-circuit to 304 Not Modified.
+- Episode count and latest-episode date displayed in the subscriptions view. Date format configurable via `PODIMO_DATE_FORMAT` (Go `time.Format` layout, default `2006-01-02`).
+- Configurable log level via `PODIMO_LOG_LEVEL` (debug/info/warn/warning/error), replacing the boolean `DEBUG` flag.
+- GetPodcasts pagination guard: caps at 200 pages with episode-ID dedup to prevent pathological infinite loops.
+- `withAuthRetry` helper: refreshes the token once on `*AuthenticationError` and retries, shared by search, subscriptions, and feed handlers.
+- Response status code logged in request logging middleware (5xx → Error, 4xx → Warn, 2xx/3xx → Info).
+- CSS minified with source maps; TTF fonts replaced with WOFF2 variable font.
+- Direct browser visits to `/search` and `/subscriptions` (without HTMX header) redirect to `/`.
+- Dependabot for GitHub Actions auto-updates.
+
+### Changed
+- Subscriptions load automatically on page open (LocalCredentials mode) instead of behind a "Show subscriptions" button.
+- In NeedCredentials mode, subscriptions load via a `credentials-ready` trigger fired by JS once both email and password are filled, avoiding a premature 401 challenge on first paint.
+- Per-page option labels compacted to "10 / page" (was "10 per page").
+- Removed unused `.btn-sm` CSS class (replaced by `.page-btn`).
+
+### Fixed
+- `episodeCount` decoded as `float64` to match live Podimo GraphQL response types.
+- Correct Podimo GraphQL field names used for subscription metadata.
+
 ## [0.5.0] - 2026-07-17
 
 ### Added
